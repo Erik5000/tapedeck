@@ -1,6 +1,6 @@
 import pytest
 
-from bloom import config
+from tapedeck import config
 
 
 def write_yaml(tmp_path, text):

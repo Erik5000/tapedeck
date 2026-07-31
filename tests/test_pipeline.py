@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from bloom import pipeline
+from tapedeck import pipeline
 
 TODAY = date(2026, 7, 31)
 

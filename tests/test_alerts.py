@@ -1,6 +1,6 @@
 from datetime import date
 
-from bloom import alerts
+from tapedeck import alerts
 
 TODAY = date(2026, 7, 31)
 

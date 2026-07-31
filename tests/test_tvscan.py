@@ -1,6 +1,6 @@
 import pytest
 
-from bloom import tvscan
+from tapedeck import tvscan
 
 
 def entry(symbol, values):

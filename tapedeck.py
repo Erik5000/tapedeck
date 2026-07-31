@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BLOOM — situational-awareness watchlist dashboard.
+"""TAPEDECK — situational-awareness watchlist dashboard.
 
 Loads every watchlist in watchlists/*.yaml, fetches live data (TradingView
 screener + Yahoo history), and writes one self-contained interactive HTML
@@ -60,7 +60,7 @@ def slim_json(rendered_lists):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BLOOM watchlist dashboard")
+    parser = argparse.ArgumentParser(description="TAPEDECK watchlist dashboard")
     parser.add_argument("--new", dest="new_list", metavar="NAME", default=None,
                         help='scaffold a new watchlist (e.g. --new "my semis") and exit')
     parser.add_argument("--config", default=None,
@@ -78,12 +78,12 @@ def main():
 
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
 
-    from bloom import alerts as alerts_mod
-    from bloom import config, fetch, pipeline, render, snapshot, tvscan
+    from tapedeck import alerts as alerts_mod
+    from tapedeck import config, fetch, pipeline, render, snapshot, tvscan
 
     if args.new_list:
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
-        print(f"created {path}\nedit the tickers, then run bloom.py — it appears as a new tab")
+        print(f"created {path}\nedit the tickers, then run tapedeck.py — it appears as a new tab")
         return
 
     if args.config:
@@ -112,12 +112,12 @@ def main():
     if args.source == "auto":
         try:
             tv = tvscan.fetch_scan(all_tickers)
-            print(f"BLOOM · tradingview screener: {len(tv)}/{len(all_tickers)} tickers", file=sys.stderr)
+            print(f"TAPEDECK · tradingview screener: {len(tv)}/{len(all_tickers)} tickers", file=sys.stderr)
         except Exception as exc:
             print(f"warning: tradingview screener failed ({exc}) — using Yahoo fundamentals", file=sys.stderr)
 
     info_tickers = None if tv is None else [t for t in all_tickers if t not in tv]
-    print(f"BLOOM · fetching history: {len(all_tickers)} tickers + {'/'.join(benchmarks)} "
+    print(f"TAPEDECK · fetching history: {len(all_tickers)} tickers + {'/'.join(benchmarks)} "
           f"across {len(watchlists)} watchlist(s) …", file=sys.stderr)
     hists, bench_closes, infos = fetch.fetch_universe(all_tickers, benchmarks, info_tickers=info_tickers)
 
@@ -144,12 +144,12 @@ def main():
     data_date = max((h.index[-1].date() for h in hists.values()), default=None)
     html = render.render_multi(rendered_lists, today,
                                data_date=data_date.isoformat() if data_date else None)
-    out_path = out_dir / f"bloom-{today.isoformat()}.html"
+    out_path = out_dir / f"tapedeck-{today.isoformat()}.html"
     out_path.write_text(html)
     print(f"wrote {out_path}", file=sys.stderr)
 
     if args.png:
-        export_png(out_path, out_dir / f"bloom-{today.isoformat()}.png")
+        export_png(out_path, out_dir / f"tapedeck-{today.isoformat()}.png")
     if args.as_json:
         print(json.dumps(slim_json(rendered_lists), indent=1, default=str))
     if not args.no_open:

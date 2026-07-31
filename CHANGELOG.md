@@ -1,4 +1,10 @@
-# BLOOM Changelog
+# TAPEDECK Changelog
+
+## 2026-07-31 — Renamed BLOOM → TAPEDECK
+- GitHub repo renamed to `Erik5000/tapedeck` (old `bloom` URL redirects);
+  package `bloom/` → `tapedeck/`, CLI `tapedeck.py`, all branding, favicon 📼,
+  output files now `output/tapedeck-DATE.html`.
+- Historical entries below keep their original text with paths updated.
 
 ## 2026-07-31 — Public repo prep + --new scaffold
 - `--new "name"` scaffolds a ready-to-edit watchlist yaml
@@ -27,7 +33,7 @@
   and to browse them without re-running anything.
 
 ## 2026-07-31 — TradingView screener as primary snapshot source
-- New `bloom/tvscan.py`: one POST to TradingView's public screener endpoint
+- New `tapedeck/tvscan.py`: one POST to TradingView's public screener endpoint
   fetches price, %1D, market cap, P/S, P/E, %YTD, 52w high, RVol, ATR, sector,
   earnings date and the TV chart symbol for all tickers at once.
 - `pipeline.build_rows(tv=...)` merges screener values over Yahoo ones
@@ -47,13 +53,13 @@
   dashboard stays self-contained/offline-capable. Sorting keeps each detail row
   glued to its ticker row.
 - TV symbols auto-derived from Yahoo exchange codes (NMS→NASDAQ, NYQ→NYSE,
-  PCX→AMEX, …) in `bloom/pipeline.py:tv_symbol`; per-ticker `tv_symbol:`
+  PCX→AMEX, …) in `tapedeck/pipeline.py:tv_symbol`; per-ticker `tv_symbol:`
   override supported in `portfolio.yaml`. 4 new tests (56 total).
 - WHY: Erik wants to jump from the scan table straight into his execution
   timeframes without leaving the page.
 
 ## 2026-07-31 — Initial build
-- Built the full tool from scratch: `bloom.py` CLI + `bloom/` package
+- Built the full tool from scratch: `tapedeck.py` CLI + `tapedeck/` package
   (`config`, `fetch`, `metrics`, `pipeline`, `alerts`, `snapshot`, `render`),
   `portfolio.yaml` pre-filled with the 25 tickers from the reference image
   (`input/Situational Awareness Holdings.jpeg`).

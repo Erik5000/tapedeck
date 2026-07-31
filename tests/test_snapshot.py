@@ -1,4 +1,4 @@
-from bloom import snapshot
+from tapedeck import snapshot
 
 
 def rows(price_nvda=100.0, nvda_above_20=False):

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from bloom import metrics
+from tapedeck import metrics
 
 
 def bseries(values, end="2026-07-31"):

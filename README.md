@@ -1,4 +1,4 @@
-# BLOOM — Watchlist Dashboard
+# TAPEDECK — Watchlist Dashboard
 
 Self-contained multi-watchlist tracker inspired by the "Situational Awareness
 Holdings" table by [Lin @speculator_io](https://x.com/speculator_io). One
@@ -10,12 +10,12 @@ dashboard with a tab per list — no server, no API key, nothing to sign up for.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-.venv/bin/python3 bloom.py                 # all watchlists → output/bloom-DATE.html → browser
-.venv/bin/python3 bloom.py --new "my semis"  # scaffold a new watchlist file
-.venv/bin/python3 bloom.py --list my-semis # only some lists (comma-separated names)
-.venv/bin/python3 bloom.py --png           # also export PNG (headless Chrome)
-.venv/bin/python3 bloom.py --json          # machine-readable summary to stdout
-.venv/bin/python3 bloom.py --no-open       # don't open the browser
+.venv/bin/python3 tapedeck.py                 # all watchlists → output/tapedeck-DATE.html → browser
+.venv/bin/python3 tapedeck.py --new "my semis"  # scaffold a new watchlist file
+.venv/bin/python3 tapedeck.py --list my-semis # only some lists (comma-separated names)
+.venv/bin/python3 tapedeck.py --png           # also export PNG (headless Chrome)
+.venv/bin/python3 tapedeck.py --json          # machine-readable summary to stdout
+.venv/bin/python3 tapedeck.py --no-open       # don't open the browser
 ```
 
 The first run seeds `watchlists/` from `examples/` (the public Situational
@@ -26,7 +26,7 @@ Awareness book + an index/sector Market Pulse list) so it works out of the box.
 Your lists live in `watchlists/*.yaml` — one file per watchlist (files starting
 with `_` are ignored). **The whole directory is gitignored**: your personal
 lists, positions and cost basis never end up in the repo. **Create a new list**
-with `bloom.py --new "name"` (or copy any yaml) — it appears as a tab on the
+with `tapedeck.py --new "name"` (or copy any yaml) — it appears as a tab on the
 next run. The page remembers which tab you had open.
 
 ```yaml
@@ -94,6 +94,6 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 
 ## Layout
 
-`bloom.py` (CLI) → `bloom/fetch.py` (all network) → `bloom/pipeline.py` +
-`bloom/metrics.py` (pure computation) → `bloom/alerts.py` / `bloom/snapshot.py`
-→ `bloom/render.py` (self-contained HTML). Tests: `.venv/bin/python3 -m pytest tests/`.
+`tapedeck.py` (CLI) → `tapedeck/fetch.py` (all network) → `tapedeck/pipeline.py` +
+`tapedeck/metrics.py` (pure computation) → `tapedeck/alerts.py` / `tapedeck/snapshot.py`
+→ `tapedeck/render.py` (self-contained HTML). Tests: `.venv/bin/python3 -m pytest tests/`.

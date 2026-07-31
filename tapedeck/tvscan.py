@@ -25,7 +25,7 @@ def fetch_scan(tickers, timeout=15):
         "columns": COLUMNS,
     }
     resp = requests.post(SCAN_URL, json=payload, timeout=timeout,
-                         headers={"User-Agent": "Mozilla/5.0 (Macintosh) bloom-dashboard"})
+                         headers={"User-Agent": "Mozilla/5.0 (Macintosh) tapedeck-dashboard"})
     resp.raise_for_status()
     return parse_scan(resp.json(), tickers)
 
