@@ -1,0 +1,19 @@
+# Starter second watchlist — index / sector pulse. Edit or delete freely.
+title: Market Pulse
+order: 2
+benchmark: SPY
+
+holdings:
+  - ticker: SPY
+    tv_symbol: AMEX:SPY
+  - ticker: QQQ
+  - ticker: IWM
+    tv_symbol: AMEX:IWM
+  - ticker: SMH
+  - ticker: TLT
+  - ticker: GLD
+    tv_symbol: AMEX:GLD
+  - ticker: XLE
+    tv_symbol: AMEX:XLE
+  - ticker: XLK
+    tv_symbol: AMEX:XLK

@@ -1,0 +1,13 @@
+# local environment
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# personal data — never committed
+watchlists/
+output/
+
+# reference material (not ours to redistribute)
+input/

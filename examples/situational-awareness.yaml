@@ -1,0 +1,90 @@
+title: Situational Awareness
+order: 1
+# BLOOM portfolio / watchlist config
+#
+# Each entry:
+#   ticker:      required (Yahoo Finance symbol)
+#   name:        optional display name (falls back to Yahoo's longName)
+#   group:       optional tag for grouping (e.g. ai-power, semis, btc-miners)
+#   shares:      optional — position size. Adds Mkt Value / Weight / P&L columns.
+#   cost_basis:  optional — average entry price per share (used for open P&L)
+#   tv_symbol:   optional — TradingView symbol override for the chart panel
+#                (e.g. "AMEX:SPY"). Auto-derived from the Yahoo exchange otherwise.
+#
+# Tickers without shares/cost_basis are tracked watchlist-only.
+
+benchmark: SPY
+
+holdings:
+  - ticker: IREN
+    group: ai-power
+  - ticker: WYFI
+    name: WhiteFiber
+    group: ai-power
+  - ticker: BE
+    name: Bloom Energy
+    group: ai-power
+  - ticker: SNDK
+    name: Sandisk
+    group: semis
+  - ticker: BTDR
+    name: Bitdeer Technologies
+    group: btc-miners
+  - ticker: SHAZ
+    name: SharonAI
+    group: ai-power
+  - ticker: CRWV
+    name: CoreWeave
+    group: ai-power
+  - ticker: RIOT
+    name: Riot Platforms
+    group: btc-miners
+  - ticker: CLSK
+    name: CleanSpark
+    group: btc-miners
+  - ticker: APLD
+    name: Applied Digital
+    group: ai-power
+  - ticker: CORZ
+    name: Core Scientific
+    group: ai-power
+  - ticker: BW
+    name: Babcock & Wilcox Enterprises
+    group: ai-power
+  - ticker: MU
+    name: Micron Technology
+    group: semis
+  - ticker: HIVE
+    name: HIVE Digital
+    group: btc-miners
+  - ticker: SEI
+    name: Solaris Energy Infrastructure
+    group: ai-power
+  - ticker: AMD
+    group: semis
+  - ticker: INTC
+    name: Intel
+    group: semis
+  - ticker: PSIX
+    name: Power Solutions International
+    group: ai-power
+  - ticker: GLW
+    name: Corning
+    group: semis
+  - ticker: TSM
+    name: TSMC
+    group: semis
+  - ticker: SMH
+    name: VanEck Semiconductor ETF
+    group: semis
+  - ticker: ASML
+    group: semis
+  - ticker: PUMP
+    name: ProPetro
+    group: energy
+  - ticker: NVDA
+    name: NVIDIA
+    group: semis
+  - ticker: TEL
+    name: TE Connectivity
+    group: semis
