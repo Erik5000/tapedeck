@@ -315,6 +315,84 @@ def _diff_html(diff):
             f'{"".join(chips)}</section>')
 
 
+def _cockpit_html(cockpit, fresh):
+    """Read-only vault cockpit state panel. Empty string when no cockpit attached."""
+    if not cockpit:
+        return ""
+    chips = []
+    if cockpit.get("regime"):
+        chips.append(f'<span class="chip"><b>REGIME</b> {h.escape(cockpit["regime"])}</span>')
+    freeze = cockpit.get("freeze")
+    if freeze:
+        up = freeze.upper()
+        cls = "good" if "LIFTED" in up else ("bad" if up.startswith(("FROZEN", "FULL", "ON")) else "warn")
+        chips.append(f'<span class="chip {cls}"><b>FREEZE</b> {h.escape(freeze)}</span>')
+    if fresh and fresh.get("regenerated"):
+        age = fresh.get("age_days")
+        cls = "warn" if age is not None and age > 9 else ""
+        sub = f" ({age}d)" if age is not None else ""
+        chips.append(f'<span class="chip {cls}">refreshed {h.escape(fresh["regenerated"])}{sub}</span>')
+    for t in cockpit.get("triad") or []:
+        status = (t.get("status") or "").lower()
+        cls = "good" if "quiet" in status else ("warn" if "watch" in status else "bad")
+        chips.append(f'<span class="chip {cls}"><b>{h.escape(t.get("leg") or "?")}</b> '
+                     f'{h.escape(t.get("reading") or "")} · {h.escape(t.get("status") or "")}</span>')
+    for d in cockpit.get("open_decisions") or []:
+        chips.append(f'<span class="chip warn">#{d["id"]} {h.escape(d.get("title") or "")}</span>')
+
+    table = ""
+    if cockpit.get("sleeves"):
+        body = []
+        for s in cockpit["sleeves"]:
+            fill = s.get("fill_status") or ""
+            cls = "up" if fill.upper() == "STARTER-OK" else ("down" if fill.upper().startswith("FROZEN") else "")
+            conf = s.get("conf")
+            body.append(
+                "<tr>"
+                f'<td>{h.escape(s.get("position") or "")}</td>'
+                f'<td>{h.escape(", ".join(s.get("tickers") or []))}</td>'
+                f'<td class="a-r"><span class="num">{h.escape(s.get("size") or "")}</span></td>'
+                f'<td class="{cls}">{h.escape(fill)}</td>'
+                f'<td class="a-r"><span class="num">{conf if conf is not None else "n/a"}</span></td>'
+                "</tr>")
+        table = ('<table class="minitbl"><thead><tr><th>Sleeve</th><th>Tickers</th>'
+                 '<th class="a-r">Size</th><th>Fill</th><th class="a-r">Conf</th></tr></thead>'
+                 f'<tbody>{"".join(body)}</tbody></table>')
+    return (f'<section class="panel pcol"><span class="ptitle">Cockpit</span>'
+            f'<div class="chiprow">{"".join(chips)}</div>{table}</section>')
+
+
+def _baskets_html(baskets):
+    """Cross-basket comparison table. Empty string below two baskets (nothing to compare)."""
+    if len(baskets) < 2:
+        return ""
+
+    def pcell(v):
+        if v is None:
+            return '<td class="a-r"><span class="num">n/a</span></td>'
+        cls = "up" if v >= 0 else "down"
+        return f'<td class="a-r"><span class="num {cls}">{fmt_pct(v)}</span></td>'
+
+    body = []
+    for b in baskets:
+        breadth = f'{b["breadth_sma50_pct"]:.0f}%' if b.get("breadth_sma50_pct") is not None else "n/a"
+        off = fmt_pct(b.get("med_pct_off_high"), 1)
+        anti = ' class="anti"' if b["group"] == "anti-basket" else ""
+        body.append(
+            f'<tr{anti}>'
+            f'<td>{h.escape(b["group"])}</td>'
+            f'<td class="a-r"><span class="num">{b["n"]}</span></td>'
+            + pcell(b.get("avg_pct_1d")) + pcell(b.get("med_rs_1m")) + pcell(b.get("med_rs_3m"))
+            + f'<td class="a-r"><span class="num">{breadth}</span></td>'
+            + f'<td class="a-r"><span class="num">{off}</span></td>'
+            "</tr>")
+    return ('<section class="panel pcol"><span class="ptitle">Baskets</span>'
+            '<table class="minitbl"><thead><tr><th>Basket</th><th class="a-r">N</th>'
+            '<th class="a-r">Avg 1D</th><th class="a-r">Med RS 1M</th><th class="a-r">Med RS 3M</th>'
+            '<th class="a-r">&gt;50SMA</th><th class="a-r">Med Δ52wH</th></tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></section>')
+
+
 def _averages_row(rows, has_pos):
     def avg(key):
         vals = [r[key] for r in rows if r.get(key) is not None]
@@ -359,6 +437,8 @@ def _section_html(wl, today):
     section = (
         f'<section class="wl-section" data-wl="{h.escape(wl["name"])}">'
         + _summary_tiles(wl.get("summary"), rows_sorted)
+        + _cockpit_html(wl.get("cockpit"), wl.get("cockpit_fresh"))
+        + _baskets_html(wl.get("baskets") or [])
         + _alerts_html(wl.get("alerts") or [])
         + _diff_html(wl.get("diff"))
         + meta
@@ -463,6 +543,13 @@ h1 .brand {{ font-weight:800; }}
 .chip.good {{ color:var(--up); background:rgba(var(--up-rgb),.08); }}
 .chip.bad {{ color:var(--down); background:rgba(var(--down-rgb),.08); }}
 .chip.warn {{ color:var(--warn-ink); background:rgba(var(--val-rgb),.12); }}
+.panel.pcol {{ display:block; }}
+.panel.pcol .chiprow {{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0 4px; }}
+.minitbl {{ border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; margin:2px 0; }}
+.minitbl thead th {{ position:static; cursor:default; font-size:10px; color:var(--muted); text-align:left; }}
+.minitbl th.a-r, .minitbl td.a-r {{ text-align:right; }}
+.minitbl td {{ padding:2px 9px; }}
+.minitbl tr.anti td {{ border-top:2px solid var(--border); }}
 .tablewrap {{ overflow-x:auto; background:var(--surface); border:1px solid var(--border); border-radius:10px; }}
 table.wltbl {{ border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }}
 th, td {{ padding:4px 9px; white-space:nowrap; }}

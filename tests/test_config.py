@@ -89,6 +89,36 @@ def test_seed_watchlists_copies_examples_once(tmp_path):
     assert config.seed_watchlists(target, examples) == []  # already populated → no-op
 
 
+def test_cockpit_and_anti_basket_default_none(tmp_path):
+    path = write_yaml(tmp_path, "holdings:\n  - ticker: AMD\n")
+    cfg = config.load_config(path)
+    assert cfg["cockpit"] is None
+    assert cfg["anti_basket"] is None
+
+
+def test_cockpit_and_anti_basket_passthrough(tmp_path):
+    path = write_yaml(tmp_path, """
+cockpit: /some/vault dir/COCKPIT.md
+anti_basket: situational-awareness
+holdings:
+  - ticker: AMD
+""")
+    cfg = config.load_config(path)
+    assert cfg["cockpit"] == "/some/vault dir/COCKPIT.md"
+    assert cfg["anti_basket"] == "situational-awareness"
+
+
+def test_load_watchlists_passes_cockpit_keys(tmp_path):
+    (tmp_path / "book.yaml").write_text(
+        "cockpit: /some/vault dir/COCKPIT.md\nanti_basket: pulse\nholdings:\n  - ticker: AMD\n")
+    (tmp_path / "pulse.yaml").write_text("holdings:\n  - ticker: NVDA\n")
+    lists = {w["name"]: w for w in config.load_watchlists(tmp_path)}
+    assert lists["book"]["cockpit"] == "/some/vault dir/COCKPIT.md"
+    assert lists["book"]["anti_basket"] == "pulse"
+    assert lists["pulse"]["cockpit"] is None
+    assert lists["pulse"]["anti_basket"] is None
+
+
 def test_load_custom_benchmark(tmp_path):
     path = write_yaml(tmp_path, "benchmark: qqq\nholdings:\n  - ticker: AMD\n")
     assert config.load_config(path)["benchmark"] == "QQQ"

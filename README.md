@@ -15,6 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python3 tapedeck.py --list my-semis # only some lists (comma-separated names)
 .venv/bin/python3 tapedeck.py --png           # also export PNG (headless Chrome)
 .venv/bin/python3 tapedeck.py --json          # machine-readable summary to stdout
+# every run also writes the same feed to output/tapedeck-latest.json (stable path)
 .venv/bin/python3 tapedeck.py --no-open       # don't open the browser
 ```
 
@@ -33,6 +34,8 @@ next run. The page remembers which tab you had open.
 title: My Semis        # tab label (default: prettified filename)
 order: 3               # tab position (lists without order go last, alphabetical)
 benchmark: SPY         # RS reference for this list
+cockpit: /path/to/COCKPIT.md   # optional: read-only status panel parsed from this markdown file
+anti_basket: other-list        # optional: aggregate that list as an "anti-basket" row in the Baskets table
 holdings:
   - ticker: NVDA
     name: NVIDIA       # optional display name
@@ -48,6 +51,14 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 
 ## What's on the page
 
+- **Cockpit** (only with `cockpit:`) — read-only panel parsed from an external
+  markdown status file: regime/freeze chips, monitored legs, open decisions and
+  a sleeve table. The file is never written to; if it's missing or its format
+  drifts, the panel degrades to omission and the run continues.
+- **Baskets** (with 2+ `group:` tags, or `anti_basket:`) — one aggregate row per
+  group: avg %1D, median RS 1M/3M, breadth above 50SMA, median Δ52w-high; the
+  `anti_basket:` list appears as a bottom comparison row (`anti-basket` is a
+  reserved group name).
 - **Alerts** — new 52w high/low, 20/50/200 SMA crosses (vs yesterday), gaps ≥5%, earnings ≤7 days
 - **Since last run** — price moves, SMA state flips, added/removed tickers vs the previous snapshot (`output/snapshots/`)
 - **Table (Core)** — price, %1D and %YTD heat, market cap, P/S (amber heat) / P/E, 1Y sparkline, Δ 52w-high drawdown bar, RS-vs-benchmark 1M mini bars + cross-sectional rank, SMA arrows
@@ -57,7 +68,7 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
   candles (Berlin time). Charts load on demand from TradingView's CDN, so this is
   the one feature that needs internet; the rest of the page works offline.
   Symbols are auto-mapped (NASDAQ/NYSE/AMEX) from Yahoo's exchange code —
-  override per ticker with `tv_symbol:` in `portfolio.yaml` if one resolves wrong.
+  override per ticker with `tv_symbol:` in the watchlist yaml if one resolves wrong.
 - Click any column header to sort. Hover cells for detail. Theme: auto/light/dark
   (open charts rebuild to match the theme).
 
@@ -95,5 +106,7 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 ## Layout
 
 `tapedeck.py` (CLI) → `tapedeck/fetch.py` (all network) → `tapedeck/pipeline.py` +
-`tapedeck/metrics.py` (pure computation) → `tapedeck/alerts.py` / `tapedeck/snapshot.py`
-→ `tapedeck/render.py` (self-contained HTML). Tests: `.venv/bin/python3 -m pytest tests/`.
+`tapedeck/metrics.py` (pure computation) → `tapedeck/alerts.py` / `tapedeck/snapshot.py` /
+`tapedeck/vaultlink.py` (read-only external status file) → `tapedeck/render.py`
+(self-contained HTML) + `tapedeck/feed.py` (JSON feed).
+Tests: `.venv/bin/python3 -m pytest tests/`.

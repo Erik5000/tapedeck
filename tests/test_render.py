@@ -121,6 +121,63 @@ def test_render_multi_single_list_has_no_tabs():
     assert html.count('class="wtab"') == 0
 
 
+# --- cockpit + basket panels ---
+
+def cockpit_data():
+    return {"regenerated": "2026-07-28", "regime": "higher-for-longer, low-stress",
+            "freeze": "PARTIAL-LIFT", "triad_refreshed": "2026-07-31", "freeze_note": None,
+            "sleeves": [{"position": "Interconnect <leaders>", "tickers": ["CRDO", "CIEN"],
+                         "size": "1.25R", "fill_status": "STARTER-OK", "conf": 62}],
+            "triad": [{"leg": "10Y breakeven", "reading": "2.21% (falling)",
+                       "trigger": ">2% and rising", "status": "quiet"}],
+            "open_decisions": [{"id": 5, "title": "Monthly thesis review"}]}
+
+
+def test_cockpit_panel_renders_and_escapes():
+    w = wl("book", "Book", [sample_row()])
+    w["cockpit"] = cockpit_data()
+    w["cockpit_fresh"] = {"regenerated": "2026-07-28", "age_days": 3,
+                          "triad_refreshed": "2026-07-31", "triad_age_days": 0}
+    html = render.render_multi([w], TODAY)
+    assert "Cockpit" in html
+    assert "PARTIAL-LIFT" in html
+    assert "10Y breakeven" in html
+    assert "#5 Monthly thesis review" in html
+    assert "Interconnect &lt;leaders&gt;" in html
+    assert "<leaders>" not in html
+    assert "STARTER-OK" in html
+    assert "(3d)" in html  # freshness age
+
+
+def test_cockpit_panel_absent_without_cockpit():
+    html = render.render_multi([wl("book", "Book", [sample_row()])], TODAY)
+    assert "Cockpit" not in html
+
+
+def basket(group, **over):
+    base = {"group": group, "n": 3, "avg_pct_1d": 1.0, "med_rs_1m": 2.0,
+            "med_rs_3m": 3.0, "breadth_sma50_pct": 66.7, "med_pct_off_high": -20.0}
+    base.update(over)
+    return base
+
+
+def test_baskets_panel_renders_with_anti_row():
+    w = wl("book", "Book", [sample_row()])
+    w["baskets"] = [basket("t1"), basket("anti-basket", n=25, med_rs_1m=None)]
+    html = render.render_multi([w], TODAY)
+    assert "Baskets" in html
+    assert "anti-basket" in html
+    assert 'class="anti"' in html
+    assert "+2.00%" in html  # t1 med RS 1M formatted
+    assert "67%" in html     # breadth rounded
+
+
+def test_baskets_panel_absent_with_single_basket():
+    w = wl("book", "Book", [sample_row()])
+    w["baskets"] = [basket("t1")]
+    assert "Baskets" not in render.render_multi([w], TODAY)
+
+
 def test_page_shows_diff_since():
     diff = {"since": "2026-07-30", "movers": [{"ticker": "NVDA", "change_pct": 2.1}],
             "sma_flips": [], "added": [], "removed": []}

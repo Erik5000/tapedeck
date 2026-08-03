@@ -162,3 +162,50 @@ def test_portfolio_summary_empty():
 
 def test_ranks_descending_none_safe():
     assert metrics.ranks([5.0, None, 10.0, -1.0]) == [2, None, 1, 3]
+
+
+# --- basket aggregates ---
+
+def _row(group=None, pct_1d=None, rs_1m=None, rs_3m=None, off_high=None, above50=None):
+    sma = {} if above50 is None else {"50": {"above": above50}}
+    return {"group": group, "pct_1d": pct_1d, "rs_1m": rs_1m, "rs_3m": rs_3m,
+            "pct_off_high": off_high, "sma": sma}
+
+
+def test_basket_aggregate_math():
+    rows = [
+        _row(pct_1d=1.0, rs_1m=2.0, rs_3m=10.0, off_high=-10.0, above50=True),
+        _row(pct_1d=3.0, rs_1m=4.0, rs_3m=20.0, off_high=-20.0, above50=False),
+        _row(pct_1d=None, rs_1m=6.0, rs_3m=None, off_high=-30.0, above50=True),
+    ]
+    b = metrics.basket_aggregate(rows, "t1")
+    assert b["group"] == "t1"
+    assert b["n"] == 3
+    assert b["avg_pct_1d"] == pytest.approx(2.0)
+    assert b["med_rs_1m"] == pytest.approx(4.0)
+    assert b["med_rs_3m"] == pytest.approx(15.0)
+    assert b["breadth_sma50_pct"] == pytest.approx(2 / 3 * 100)
+    assert b["med_pct_off_high"] == pytest.approx(-20.0)
+
+
+def test_basket_aggregate_all_missing_is_none():
+    b = metrics.basket_aggregate([_row(), _row()], "x")
+    assert b["n"] == 2
+    assert b["avg_pct_1d"] is None
+    assert b["med_rs_1m"] is None
+    assert b["breadth_sma50_pct"] is None
+    assert b["med_pct_off_high"] is None
+
+
+def test_basket_breadth_denominator_excludes_missing_sma():
+    rows = [_row(above50=True), _row()]  # second row has no 50SMA state at all
+    assert metrics.basket_aggregate(rows, "x")["breadth_sma50_pct"] == pytest.approx(100.0)
+
+
+def test_group_aggregates_first_appearance_order():
+    rows = [_row(group="b", pct_1d=1.0), _row(group="a", pct_1d=2.0),
+            _row(group="b", pct_1d=3.0), _row(group=None, pct_1d=9.0)]
+    baskets = metrics.group_aggregates(rows)
+    assert [b["group"] for b in baskets] == ["b", "a"]
+    assert baskets[0]["n"] == 2
+    assert baskets[0]["avg_pct_1d"] == pytest.approx(2.0)

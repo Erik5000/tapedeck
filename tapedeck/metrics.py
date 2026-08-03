@@ -1,5 +1,7 @@
 """Pure metric computations on price history. No network access."""
 
+import statistics
+
 import pandas as pd
 
 
@@ -198,3 +200,30 @@ def ranks(values):
     for rank, (_, i) in enumerate(present, start=1):
         out[i] = rank
     return out
+
+
+# --- basket aggregates ---
+
+def basket_aggregate(rows, label):
+    """Aggregate row dicts into one basket summary. Pure; tolerates missing fields."""
+    def med(key):
+        vals = [r[key] for r in rows if r.get(key) is not None]
+        return float(statistics.median(vals)) if vals else None
+
+    pct = [r["pct_1d"] for r in rows if r.get("pct_1d") is not None]
+    above = [r["sma"]["50"]["above"] for r in rows if (r.get("sma") or {}).get("50")]
+    return {
+        "group": label,
+        "n": len(rows),
+        "avg_pct_1d": sum(pct) / len(pct) if pct else None,
+        "med_rs_1m": med("rs_1m"),
+        "med_rs_3m": med("rs_3m"),
+        "breadth_sma50_pct": sum(above) / len(above) * 100 if above else None,
+        "med_pct_off_high": med("pct_off_high"),
+    }
+
+
+def group_aggregates(rows):
+    """One basket per distinct group, in first-appearance order. Ungrouped rows are skipped."""
+    groups = dict.fromkeys(r["group"] for r in rows if r.get("group"))
+    return [basket_aggregate([r for r in rows if r.get("group") == g], g) for g in groups]

@@ -10,6 +10,8 @@ _TEMPLATE = """\
 title: {title}
 # order: 3              # optional tab position (lists without order go last)
 benchmark: SPY
+# cockpit: /path/to/COCKPIT.md   # optional: render a read-only status panel parsed from this markdown file
+# anti_basket: other-list        # optional: aggregate that watchlist as an "anti-basket" row in the basket table
 
 holdings:
   - ticker: NVDA
@@ -45,7 +47,9 @@ def load_config(path):
             "tv_symbol": entry.get("tv_symbol"),
         })
     return {"benchmark": str(raw.get("benchmark") or "SPY").upper(),
-            "title": raw.get("title"), "order": raw.get("order"), "holdings": holdings}
+            "title": raw.get("title"), "order": raw.get("order"), "holdings": holdings,
+            "cockpit": str(raw["cockpit"]) if raw.get("cockpit") else None,
+            "anti_basket": str(raw["anti_basket"]).strip() if raw.get("anti_basket") else None}
 
 
 def load_watchlists(directory):
@@ -57,7 +61,8 @@ def load_watchlists(directory):
         cfg = load_config(path)
         title = cfg["title"] or path.stem.replace("-", " ").replace("_", " ").title()
         watchlists.append({"name": path.stem, "title": title, "order": cfg["order"],
-                           "benchmark": cfg["benchmark"], "holdings": cfg["holdings"]})
+                           "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
+                           "cockpit": cfg["cockpit"], "anti_basket": cfg["anti_basket"]})
     if not watchlists:
         raise ValueError(f"no watchlists found in {directory} — add a .yaml file with a 'holdings' list")
     watchlists.sort(key=lambda w: (w["order"] is None, w["order"] if w["order"] is not None else 0, w["name"]))

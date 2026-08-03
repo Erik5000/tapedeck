@@ -1,5 +1,24 @@
 # TAPEDECK Changelog
 
+## 2026-07-31 — Cockpit panel, basket monitor, stable JSON feed
+- New optional watchlist key `cockpit: /path/to/COCKPIT.md` — renders a
+  read-only status panel (regime/freeze chips, triad legs, open decisions,
+  sleeve mini-table) parsed each run from an external markdown file by new
+  `tapedeck/vaultlink.py`. Strictly read-only: the app never writes to the
+  file; missing/drifted files degrade to omission with a stderr warning.
+- New optional key `anti_basket: other-list` + per-group aggregates
+  (`metrics.basket_aggregate` / `group_aggregates`) — a Baskets mini-table
+  per list: one row per `group:` (avg %1D, median RS 1M/3M, breadth >50SMA,
+  median Δ52w-high) plus the named sibling watchlist as a synthetic
+  `anti-basket` comparison row (that group name is reserved).
+- Every run now writes `output/tapedeck-latest.json` (stable path, gitignored)
+  with rows + baskets + cockpit state for external consumers; `--json` prints
+  the same feed. New `tapedeck/feed.py` absorbs the old `slim_json`.
+- 25 new tests (97 total).
+- WHY: lets an external research pipeline and the dashboard read the same
+  state — market truth flows out via the feed, externally-managed cockpit
+  state flows in via the read-only panel.
+
 ## 2026-07-31 — Renamed BLOOM → TAPEDECK
 - GitHub repo renamed to `Erik5000/tapedeck` (old `bloom` URL redirects);
   package `bloom/` → `tapedeck/`, CLI `tapedeck.py`, all branding, favicon 📼,

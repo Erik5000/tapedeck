@@ -37,28 +37,6 @@ def export_png(html_path, png_path):
     return ok
 
 
-def _slim_rows(rows):
-    keep = ("ticker", "name", "group", "price", "pct_1d", "pct_ytd", "pct_off_high",
-            "rs_1m", "rs_rank", "pe", "ps", "market_cap", "earnings_date", "gap_pct",
-            "tv_symbol")
-    slim_rows = []
-    for r in rows:
-        slim = {k: r.get(k) for k in keep}
-        slim["sma_above"] = {w: s["above"] for w, s in (r.get("sma") or {}).items()}
-        if r.get("position"):
-            slim["position"] = r["position"]
-        slim_rows.append(slim)
-    return slim_rows
-
-
-def slim_json(rendered_lists):
-    return {"lists": [{
-        "name": wl["name"], "title": wl["title"], "benchmark": wl["benchmark"],
-        "rows": _slim_rows(wl["rows"]), "summary": wl["summary"],
-        "alerts": wl["alerts"], "diff": wl["diff"],
-    } for wl in rendered_lists]}
-
-
 def main():
     parser = argparse.ArgumentParser(description="TAPEDECK watchlist dashboard")
     parser.add_argument("--new", dest="new_list", metavar="NAME", default=None,
@@ -79,7 +57,7 @@ def main():
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
 
     from tapedeck import alerts as alerts_mod
-    from tapedeck import config, fetch, pipeline, render, snapshot, tvscan
+    from tapedeck import config, feed, fetch, metrics, pipeline, render, snapshot, tvscan, vaultlink
 
     if args.new_list:
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
@@ -89,9 +67,12 @@ def main():
     if args.config:
         cfg = config.load_config(args.config)
         stem = Path(args.config).stem
+        if cfg["anti_basket"]:
+            print("note: anti_basket is ignored in --config single-list mode", file=sys.stderr)
         watchlists = [{"name": stem,
                        "title": cfg["title"] or stem.replace("-", " ").replace("_", " ").title(),
-                       "benchmark": cfg["benchmark"], "holdings": cfg["holdings"]}]
+                       "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
+                       "cockpit": cfg["cockpit"], "anti_basket": None}]
     else:
         seeded = config.seed_watchlists(ROOT / "watchlists", ROOT / "examples")
         if seeded:
@@ -138,8 +119,26 @@ def main():
         prev = snapshot.find_previous(snap_dir) if snap_dir.exists() else None
         diff = snapshot.diff_snapshots(prev, rows) if prev else None
         snapshot.save_snapshot(rows, snap_dir, today.isoformat())
+        cockpit = vaultlink.load_cockpit(wl["cockpit"]) if wl.get("cockpit") else None
         rendered_lists.append({"name": wl["name"], "title": wl["title"], "benchmark": wl["benchmark"],
-                               "rows": rows, "summary": summary, "alerts": alert_list, "diff": diff})
+                               "rows": rows, "summary": summary, "alerts": alert_list, "diff": diff,
+                               "cockpit": cockpit,
+                               "cockpit_fresh": vaultlink.cockpit_freshness(cockpit, today)})
+
+    # cross-list composition: baskets need every list's rows (the anti-basket is a sibling list)
+    by_name = {r["name"]: r for r in rendered_lists}
+    for wl, rendered in zip(watchlists, rendered_lists):
+        baskets = metrics.group_aggregates(rendered["rows"])
+        anti = wl.get("anti_basket")
+        if anti and anti in by_name:
+            if by_name[anti]["benchmark"] != rendered["benchmark"]:
+                print(f"warning: anti_basket '{anti}' uses benchmark {by_name[anti]['benchmark']} "
+                      f"— RS not directly comparable to {rendered['benchmark']}", file=sys.stderr)
+            baskets.append(metrics.basket_aggregate(by_name[anti]["rows"], "anti-basket"))
+        elif anti:
+            print(f"warning: anti_basket '{anti}' not loaded (add it or drop --list) — skipping",
+                  file=sys.stderr)
+        rendered["baskets"] = baskets
 
     data_date = max((h.index[-1].date() for h in hists.values()), default=None)
     html = render.render_multi(rendered_lists, today,
@@ -148,10 +147,16 @@ def main():
     out_path.write_text(html)
     print(f"wrote {out_path}", file=sys.stderr)
 
+    feed_obj = feed.build_feed(rendered_lists, today=today,
+                               data_date=data_date.isoformat() if data_date else None)
+    feed_path = out_dir / "tapedeck-latest.json"
+    feed_path.write_text(json.dumps(feed_obj, indent=1, default=str))
+    print(f"wrote {feed_path}", file=sys.stderr)
+
     if args.png:
         export_png(out_path, out_dir / f"tapedeck-{today.isoformat()}.png")
     if args.as_json:
-        print(json.dumps(slim_json(rendered_lists), indent=1, default=str))
+        print(json.dumps(feed_obj, indent=1, default=str))
     if not args.no_open:
         subprocess.run(["open", str(out_path)], check=False)
 
