@@ -1157,7 +1157,7 @@ def vwap_page(vwap=None, fresh=None, second_row=True):
 
 def test_vwap_columns_render_nearest_level():
     html = vwap_page()
-    assert "c-vwap" in html
+    assert 'data-key="vwap_level"' in html
     assert "6M" in html
     assert "0.72" in html
 
@@ -1165,13 +1165,12 @@ def test_vwap_columns_render_nearest_level():
 def test_vwap_toggle_button_present_when_a_list_has_vwap():
     html = vwap_page()
     assert 'id="vwapbtn"' in html
-    assert "show-vwap" in html
 
 
-def test_no_vwap_button_when_no_list_has_vwap():
+def test_no_vwap_columns_when_no_list_has_vwap():
     html = render.render_multi([wl("a", "A", [sample_row()])], TODAY)
     assert 'id="vwapbtn"' not in html
-    assert "c-vwap" not in html
+    assert 'data-key="vwap_level"' not in html
 
 
 def test_ticker_without_vwap_renders_empty_cells_not_zero():
@@ -1183,12 +1182,19 @@ def test_feed_chip_rendered_with_age():
     html = vwap_page(fresh={"generated": "2026-07-20", "age_days": 14, "stale": True})
     assert "levels from 2026-07-20" in html
     assert "(14d)" in html
-    assert "vwap-stale" in html
+    assert 'class="wltbl vwap-stale"' in html
+
+
+def test_fresh_feed_table_not_dimmed():
+    html = vwap_page(fresh={"generated": "2026-08-03", "age_days": 0, "stale": False})
+    assert 'class="wltbl"' in html
 
 
 def test_no_chip_without_freshness():
     assert "levels from" not in vwap_page()
 ```
+
+**These assertions target markup, not bare class names, deliberately.** The CSS block always contains `.c-vwap`, `.vwap-stale`, `.vwapladder` and friends, so an assertion like `assert "c-vwap" in html` passes no matter what the renderer does — a test that asserts nothing. Every class-related assertion in this task and the next matches an attribute (`data-key="…"`, `class="…"`) that only appears when the element is actually emitted.
 
 `sample_row(vwap=...)` works because `sample_row` merges `**overrides` into its base dict. `empty_row(vwap=None)` gives a second row with no VWAP data, which is what `test_ticker_without_vwap_renders_empty_cells_not_zero` checks.
 
@@ -1336,7 +1342,7 @@ Expected: PASS
 - [ ] **Step 8: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest tests/ -q`
-Expected: PASS (131)
+Expected: PASS (132)
 
 - [ ] **Step 9: Commit**
 
@@ -1372,18 +1378,18 @@ def test_ladder_lists_every_level_with_kind_and_value():
            "z_stretch": None}
     near = vwap_data()["levels"][0]
     html = vwap_page(vwap_data(levels=[near, far], nearest=near))
-    assert "vwapladder" in html
+    assert 'class="vwapladder"' in html
     assert "decade" in html and "anchored" in html
     assert "$90.00" in html
 
 
 def test_ladder_highlights_in_range_rows():
-    assert "lvl-hit" in vwap_page()
+    assert 'class="lvl-hit"' in vwap_page()
 
 
 def test_ladder_absent_when_ticker_has_no_vwap():
     html = render.render_multi([wl("a", "A", [sample_row()])], TODAY)
-    assert "vwapladder" not in html
+    assert 'class="vwapladder"' not in html
 
 
 def test_ladder_labels_direction_as_scan_dated():
@@ -1391,7 +1397,7 @@ def test_ladder_labels_direction_as_scan_dated():
 
 
 def test_main_row_marked_when_in_range():
-    assert "vwap-hit" in vwap_page()
+    assert 'class="mainrow vwap-hit"' in vwap_page()
 
 
 def test_main_row_unmarked_when_out_of_range():
@@ -1399,9 +1405,11 @@ def test_main_row_unmarked_when_out_of_range():
             "direction": "above", "pct_distance": 4.4, "in_range": False,
             "z_stretch": 0.29}
     html = vwap_page(vwap_data(levels=[cold], nearest=cold, in_range_any=False))
-    assert "vwap-hit" not in html
-    assert "lvl-hit" not in html
+    assert 'class="mainrow vwap-hit"' not in html
+    assert 'class="lvl-hit"' not in html
 ```
+
+Same rule as Task 6: assert on emitted markup, never on a bare class name that the CSS block also contains. This makes the `_ladder_html` row markup significant — an in-range row emits exactly `class="lvl-hit"`, an out-of-range row emits no `class` attribute at all (not an empty `class=""`). The `_LVL_HIT` constant in Step 3 exists for that reason: it keeps the quoting out of the f-string.
 
 Note `fmt_price` renders `$90.00`, not `90.00` (`render.py:23`).
 
@@ -1417,6 +1425,7 @@ In `tapedeck/render.py`, add beside `_detail_row`:
 ```python
 _LADDER_DIRECTION = {"reclaim": "reclaimed", "reject": "rejected",
                      "above": "above", "below": "below"}
+_LVL_HIT = ' class="lvl-hit"'
 
 
 def _ladder_html(vwap):
@@ -1429,7 +1438,7 @@ def _ladder_html(vwap):
     if not vwap:
         return ""
     body = "".join(
-        f'<tr class="{"lvl-hit" if lvl["in_range"] else ""}">'
+        f'<tr{_LVL_HIT if lvl["in_range"] else ""}>'
         f'<td>{h.escape(lvl["name"])}</td>'
         f'<td class="lvl-kind">{h.escape(lvl.get("kind") or "")}</td>'
         f'<td class="a-r">{fmt_price(lvl["value"])}</td>'
@@ -1498,7 +1507,7 @@ Expected: PASS
 - [ ] **Step 8: Run the full suite**
 
 Run: `.venv/bin/python3 -m pytest tests/ -q`
-Expected: PASS (137)
+Expected: PASS (138)
 
 - [ ] **Step 9: Commit**
 
