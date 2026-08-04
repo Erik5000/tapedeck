@@ -36,6 +36,8 @@ order: 3               # tab position (lists without order go last, alphabetical
 benchmark: SPY         # RS reference for this list
 cockpit: /path/to/COCKPIT.md   # optional: read-only status panel parsed from this markdown file
 anti_basket: other-list        # optional: aggregate that list as an "anti-basket" row in the Baskets table
+vwap: /path/to/vwap-latest.json   # optional: VWAP levels from a vwap-scanner --json-out feed
+vwap_alert_pct: 2.0               # optional: proximity band (%) that earns an alert (default 2.0)
 holdings:
   - ticker: NVDA
     name: NVIDIA       # optional display name
@@ -55,11 +57,29 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
   markdown status file: regime/freeze chips, monitored legs, open decisions and
   a sleeve table. The file is never written to; if it's missing or its format
   drifts, the panel degrades to omission and the run continues.
+- **VWAP** (only with `vwap:`) — VWAP and VWAP-adjacent levels from a
+  [vwap-scanner](../vwap-scanner) run: rolling and anchored VWAP lines,
+  ATH/ATL-anchored VWAPs, and static fib retracement/extension projections
+  (on a live scan, roughly a third fib and 15% ATH/ATL-anchored — not a
+  minor case). Proximity alerts (`kind: "vwap"` in the Alerts panel and in
+  the `output/tapedeck-latest.json` feed), four columns behind the VWAP
+  toggle (the level-name column isn't sortable — it mixes numeric-prefixed
+  names like "1M Rolling" with non-numeric ones like "Fib 0.618"), a green
+  edge on rows in range (heat-scaled to the list's own `vwap_alert_pct`),
+  and a full levels ladder in the expanded row. A fib level's alert/ladder
+  text never carries a trailing "VWAP" — a fib projection isn't a VWAP line.
+  Distances are recomputed against the live price on every run, so an
+  overnight scan stays accurate through the day; the `direction` column is
+  dated to the scan. Refresh the feed with
+  `vwap-scanner --universe-from output/tapedeck-latest.json --json-out output/vwap-latest.json`.
 - **Baskets** (with 2+ `group:` tags, or `anti_basket:`) — one aggregate row per
   group: avg %1D, median RS 1M/3M, breadth above 50SMA, median Δ52w-high; the
   `anti_basket:` list appears as a bottom comparison row (`anti-basket` is a
   reserved group name).
-- **Alerts** — new 52w high/low, 20/50/200 SMA crosses (vs yesterday), gaps ≥5%, earnings ≤7 days
+- **Alerts** — new 52w high/low, 20/50/200 SMA crosses (vs yesterday), gaps ≥5%,
+  earnings ≤7 days, plus VWAP proximity (`kind: "vwap"`) when `vwap:` is set —
+  on a live watchlist this can be roughly half of all alerts, so a downstream
+  consumer of `output/tapedeck-latest.json`'s `alerts` array should expect it
 - **Since last run** — price moves, SMA state flips, added/removed tickers vs the previous snapshot (`output/snapshots/`)
 - **Table (Core)** — price, %1D and %YTD heat, market cap, P/S (amber heat) / P/E, 1Y sparkline, Δ 52w-high drawdown bar, RS-vs-benchmark 1M mini bars + cross-sectional rank, SMA arrows
 - **Extended toggle** — RS 1M/3M %, % distance to each SMA, relative volume, ATR%, next earnings, sector
@@ -107,6 +127,7 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 
 `tapedeck.py` (CLI) → `tapedeck/fetch.py` (all network) → `tapedeck/pipeline.py` +
 `tapedeck/metrics.py` (pure computation) → `tapedeck/alerts.py` / `tapedeck/snapshot.py` /
-`tapedeck/vaultlink.py` (read-only external status file) → `tapedeck/render.py`
+`tapedeck/vaultlink.py` (read-only external status file) / `tapedeck/vwaplink.py`
+(read-only vwap-scanner feed) → `tapedeck/render.py`
 (self-contained HTML) + `tapedeck/feed.py` (JSON feed).
 Tests: `.venv/bin/python3 -m pytest tests/`.

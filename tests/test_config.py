@@ -140,3 +140,49 @@ def test_empty_holdings_rejected(tmp_path):
     path = write_yaml(tmp_path, "holdings: []\n")
     with pytest.raises(ValueError, match="holdings"):
         config.load_config(path)
+
+
+def test_vwap_keys_default_to_none_and_2pct(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("holdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap"] is None
+    assert cfg["vwap_alert_pct"] == 2.0
+
+
+def test_vwap_keys_parsed(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap: /tmp/vwap-latest.json\nvwap_alert_pct: 1.5\n"
+                 "holdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap"] == "/tmp/vwap-latest.json"
+    assert cfg["vwap_alert_pct"] == 1.5
+
+
+def test_vwap_keys_reach_watchlists(tmp_path):
+    (tmp_path / "a.yaml").write_text("vwap: /tmp/v.json\nvwap_alert_pct: 3\n"
+                                     "holdings:\n  - ticker: NVDA\n")
+    wl = config.load_watchlists(tmp_path)[0]
+    assert wl["vwap"] == "/tmp/v.json"
+    assert wl["vwap_alert_pct"] == 3.0
+
+
+def test_vwap_alert_pct_zero_is_preserved(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct: 0\nholdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap_alert_pct"] == 0.0
+
+
+def test_vwap_alert_pct_explicit_null_defaults_to_2pct(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct:\nholdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap_alert_pct"] == 2.0
+
+
+def test_vwap_alert_pct_negative_rejected(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct: -3\nholdings:\n  - ticker: NVDA\n")
+    with pytest.raises(ValueError, match="vwap_alert_pct"):
+        config.load_config(p)
