@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -368,3 +369,25 @@ def test_alive_tracks_a_real_process():
     child.kill()
     child.wait()
     assert srv._alive(child.pid) is False
+
+
+# ---------- the injected shell ----------
+
+def test_shell_js_parses():
+    """Caught by eye otherwise — the shell is never imported by Python."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    shell = Path(srv.__file__).with_name("appshell.js")
+    subprocess.run([node, "--check", str(shell)], check=True, capture_output=True)
+
+
+def test_shell_js_drives_the_endpoints_this_server_exposes():
+    """If a route is renamed, the buttons go dead silently — pin them together."""
+    shell = Path(srv.__file__).with_name("appshell.js").read_text()
+    for route in ("/api/refresh", "/api/vwap", "/api/status"):
+        assert route in shell, f"{route} missing from the app shell"
+    assert ".controls" in shell        # where the buttons are inserted
+    assert "tbtn" in shell             # the page's own button class
