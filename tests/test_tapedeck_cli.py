@@ -186,3 +186,93 @@ def test_single_config_mode_carries_vwap_keys(tmp_path, monkeypatch):
 
     feed_json = json.loads((tmp_path / "output" / "tapedeck-latest.json").read_text())
     assert feed_json["lists"][0]["name"] == "solo"
+
+
+# ---------- --serve ----------
+#
+# `--serve` must not fetch anything: it shows the run already on disk and lets
+# the page trigger new ones. A fetch here would make launching the app hit the
+# network before the window even appears.
+
+def test_serve_flag_starts_the_server_without_fetching(monkeypatch, tmp_path):
+    cli = _load_cli()
+    calls = {}
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 7360)
+        state = type("S", (), {"jobs": type("J", (), {"terminate": lambda self, grace=0: None})()})()
+
+        def serve_forever(self):
+            calls["served"] = True
+
+        def server_close(self):
+            calls["closed"] = True
+
+    from tapedeck import server as server_mod
+    def fake_make_server(host, port):
+        calls["bound"] = (host, port)
+        return FakeServer()
+
+    monkeypatch.setattr(server_mod, "make_server", fake_make_server)
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda *a, **k: calls.setdefault("opened", a[0]))
+
+    # serve() is called directly here — it never reaches the fetch/pipeline path
+    # at all, which is the point: launching the app must not hit the network.
+    assert cli.serve(7360, open_browser=True) == 0
+    assert calls["bound"] == ("127.0.0.1", 7360)
+    assert calls["served"] is True
+    assert calls["closed"] is True
+    assert calls["opened"][:1] == ["open"]
+
+
+def test_serve_respects_no_open(monkeypatch):
+    cli = _load_cli()
+    opened = []
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 7360)
+        state = type("S", (), {"jobs": type("J", (), {"terminate": lambda self, grace=0: None})()})()
+        serve_forever = lambda self: None
+        server_close = lambda self: None
+
+    from tapedeck import server as server_mod
+    monkeypatch.setattr(server_mod, "make_server", lambda host, port: FakeServer())
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: opened.append(a))
+
+    cli.serve(7360, open_browser=False)
+    assert opened == []
+
+
+def test_serve_stops_cleanly_on_ctrl_c(monkeypatch):
+    """Ctrl-C must not leave a job running behind the server."""
+    cli = _load_cli()
+    terminated = []
+
+    class Jobs:
+        def terminate(self, grace=0):
+            terminated.append(grace)
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 7360)
+        state = type("S", (), {"jobs": Jobs()})()
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    from tapedeck import server as server_mod
+    monkeypatch.setattr(server_mod, "make_server", lambda host, port: FakeServer())
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: None)
+
+    assert cli.serve(7360, open_browser=False) == 0
+    assert terminated, "a live job must be terminated when the server stops"
+
+
+def test_serve_port_defaults_to_the_shared_constant():
+    """The app, the CLI and the docs must agree on one port."""
+    from tapedeck.server import DEFAULT_PORT
+    assert DEFAULT_PORT == 7360
+

@@ -37,7 +37,34 @@ def export_png(html_path, png_path):
     return ok
 
 
+def serve(port, open_browser=True):
+    """Serve the last dashboard with a Refresh button, until Ctrl-C.
+
+    Doesn't fetch anything itself — it shows whatever run is already on disk and
+    lets the page trigger new ones. This is the same server TAPEDECK.app spawns,
+    which makes it the way to test the app's backend without building the app.
+    """
+    from tapedeck import server as server_mod
+
+    httpd = server_mod.make_server("127.0.0.1", port)
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    print(f"TAPEDECK · serving {url} (ctrl-c to stop)", file=sys.stderr)
+    if open_browser:
+        subprocess.run(["open", url], check=False)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nTAPEDECK · stopped", file=sys.stderr)
+    finally:
+        httpd.state.jobs.terminate(grace=2.0)
+        httpd.server_close()
+    return 0
+
+
 def main():
+    # stdlib-only module, so this stays cheap enough to import before argparse
+    from tapedeck.server import DEFAULT_PORT
+
     parser = argparse.ArgumentParser(description="TAPEDECK watchlist dashboard")
     parser.add_argument("--new", dest="new_list", metavar="NAME", default=None,
                         help='scaffold a new watchlist (e.g. --new "my semis") and exit')
@@ -52,6 +79,11 @@ def main():
     parser.add_argument("--source", choices=("auto", "yahoo"), default="auto",
                         help="auto = TradingView screener for snapshot fields with Yahoo "
                              "fallback (default); yahoo = Yahoo only")
+    parser.add_argument("--serve", action="store_true",
+                        help="serve the last dashboard at http://127.0.0.1:PORT with a "
+                             "Refresh button (this is what TAPEDECK.app runs)")
+    parser.add_argument("--port", type=int, default=None,
+                        help=f"port for --serve (default {DEFAULT_PORT})")
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
@@ -63,6 +95,9 @@ def main():
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
         print(f"created {path}\nedit the tickers, then run tapedeck.py — it appears as a new tab")
         return
+
+    if args.serve:
+        return serve(args.port or DEFAULT_PORT, open_browser=not args.no_open)
 
     if args.config:
         cfg = config.load_config(args.config)
