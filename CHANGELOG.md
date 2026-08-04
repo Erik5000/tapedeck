@@ -1,5 +1,44 @@
 # TAPEDECK Changelog
 
+## 2026-08-04 — TAPEDECK.app: a real macOS app
+
+- **`native/` — a SwiftUI + WKWebView app** installed to `~/Applications` with
+  `cd native && make install`. Its own Dock icon and window; opening it starts
+  the local server, quitting it stops the server. Follows the convention
+  already used by the sibling apps (`fundamental-terminals`, `trading-prep`,
+  `tt`): XcodeGen project, repo path baked into `Info.plist` at build time,
+  ad-hoc signed so macOS keeps the app's identity across rebuilds.
+- **`tapedeck/server.py` — a local HTTP server** (stdlib only, no new
+  dependency) serving the newest `output/tapedeck-DATE.html` at
+  `http://127.0.0.1:7360/` with a small app shell injected before `</body>`.
+  Also available without the app: `tapedeck.py --serve`.
+- **Two buttons in the dashboard's own controls row**, styled by the page's
+  existing CSS: `⟳ Refresh` re-runs `tapedeck.py` (~20s) and `◇ Rescan VWAP`
+  re-runs `vwap-scanner` (~8 min cold). Both stream the run's stderr into a
+  live status line and reload the page when it lands. One job at a time — a
+  second click gets a 409 rather than a second scan.
+- **The shutdown guarantee has two independent paths**, because ⌘Q alone
+  doesn't cover force-quit: the clean path is SIGTERM→SIGKILL from
+  `applicationWillTerminate`, and the backstop is the server's own kqueue
+  watchdog on `--parent-pid`, which fires on `kill -9` and crashes alike
+  (measured: server gone ~1s after the app is killed). SIGTERM in the server
+  also terminates any running job, so quitting mid-scan doesn't orphan an
+  8-minute fetch.
+- **The app only ever stops a server it started.** One already serving this
+  repo — `tapedeck.py --serve` in a terminal — is adopted, not double-spawned,
+  and left running when the app quits.
+- Both POST routes run local commands, so requests are refused unless the peer
+  address is loopback (unspoofable) *and* the `Host` header is pinned to
+  `127.0.0.1`/`localhost` (the DNS-rebinding half). Neither check alone covers
+  both attacks.
+- Note: the app serves over `http://127.0.0.1` where the file was previously
+  opened over `file://`. `localStorage` is origin-scoped, so the remembered tab
+  and theme reset once, on first launch.
+- 50 new tests (199 → 249): job-runner state machine, server routes against a
+  real socket, both watchdog paths, and the `--serve` wiring. The Swift shell
+  has no test target, matching the sibling apps; its lifecycle was verified by
+  hand (clean quit, force-quit, adoption, both buttons end to end).
+
 ## 2026-08-04 — VWAP levels integration
 - New optional watchlist keys `vwap: /path/to/vwap-latest.json` +
   `vwap_alert_pct` (default 2.0) — attaches VWAP and VWAP-adjacent levels
