@@ -266,7 +266,7 @@ def _cell(row, col, ctx):
 TV_TIMEFRAMES = (("12H", "720"), ("4H", "240"), ("1H", "60"))
 
 _LADDER_DIRECTION = {"reclaim": "reclaimed", "reject": "rejected",
-                     "above": "above", "below": "below"}
+                     "support": "support", "resistance": "resistance"}
 _LVL_HIT = ' class="lvl-hit"'
 
 

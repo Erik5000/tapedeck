@@ -270,7 +270,7 @@ def test_vwap_level_missing_name_renders_na():
 
 def test_ladder_lists_every_level_with_kind_and_value():
     far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
-           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "direction": "resistance", "pct_distance": 119.9, "in_range": False,
            "z_stretch": None}
     near = vwap_data()["levels"][0]
     html = vwap_page(vwap_data(levels=[near, far], nearest=near))
@@ -298,7 +298,7 @@ def test_main_row_marked_when_in_range():
 
 def test_main_row_unmarked_when_out_of_range():
     cold = {"name": "6M", "kind": "rolling", "value": 195.5, "sigma": 8.1,
-            "direction": "above", "pct_distance": 4.4, "in_range": False,
+            "direction": "support", "pct_distance": 4.4, "in_range": False,
             "z_stretch": 0.29}
     html = vwap_page(vwap_data(levels=[cold], nearest=cold, in_range_any=False))
     assert 'class="mainrow vwap-hit"' not in html
@@ -309,7 +309,7 @@ def test_ladder_out_of_range_row_has_no_class_attribute():
     # An out-of-range ladder row must emit no class attribute at all,
     # not an empty class="" — the markup shape the brief calls out.
     far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
-           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "direction": "resistance", "pct_distance": 119.9, "in_range": False,
            "z_stretch": None}
     near = vwap_data()["levels"][0]
     html = vwap_page(vwap_data(levels=[near, far], nearest=near))
@@ -338,10 +338,37 @@ def test_ladder_survives_malformed_level_fields():
     assert 'class="vwapladder"' in html
 
 
+def test_ladder_direction_renders_each_real_value():
+    # The real feed's vocabulary (states + events); "above"/"below" never occur.
+    expected = {"support": "support", "resistance": "resistance",
+                "reclaim": "reclaimed", "reject": "rejected"}
+    for direction, word in expected.items():
+        lvl = {**vwap_data()["levels"][0], "direction": direction}
+        html = vwap_page(vwap_data(levels=[lvl], nearest=lvl), second_row=False)
+        ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+        assert f"<td>{word}</td></tr>" in ladder, direction
+
+
+def test_ladder_direction_na_renders_empty_cell():
+    lvl = {**vwap_data()["levels"][0], "direction": "na"}
+    html = vwap_page(vwap_data(levels=[lvl], nearest=lvl), second_row=False)
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert "<td></td></tr>" in ladder
+    assert "na</td>" not in ladder
+
+
+def test_ladder_direction_unrecognised_value_renders_empty_cell():
+    lvl = {**vwap_data()["levels"][0], "direction": "newthing"}
+    html = vwap_page(vwap_data(levels=[lvl], nearest=lvl), second_row=False)
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert "<td></td></tr>" in ladder
+    assert "newthing" not in ladder
+
+
 def test_ladder_row_count_matches_level_count():
     near = vwap_data()["levels"][0]
     far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
-           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "direction": "resistance", "pct_distance": 119.9, "in_range": False,
            "z_stretch": None}
     html = vwap_page(vwap_data(levels=[near, far], nearest=near))
     ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)

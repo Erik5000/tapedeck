@@ -35,8 +35,9 @@ def build_alerts(rows, today):
     return alerts
 
 
-_VWAP_SEVERITY = {"reclaim": "good", "reject": "bad"}
-_VWAP_DIRECTION = {"reclaim": "reclaiming", "reject": "rejecting"}
+_VWAP_SEVERITY = {"reclaim": "good", "reject": "bad", "support": "good", "resistance": "bad"}
+_VWAP_DIRECTION = {"reclaim": "reclaiming", "reject": "rejecting",
+                    "support": "acting as support", "resistance": "acting as resistance"}
 
 
 def build_vwap_alerts(rows):

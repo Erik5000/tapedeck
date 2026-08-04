@@ -80,29 +80,51 @@ def test_above_level_reads_above():
     assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.8% above 1M VWAP · rejecting"
 
 
+def test_support_level_reads_state_suffix():
+    rows = [_row("AAPL", [{"name": "1M", "kind": "rolling", "pct_distance": -0.5,
+                           "in_range": True, "direction": "support"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.5% below 1M VWAP · acting as support"
+
+
+def test_resistance_level_reads_state_suffix():
+    rows = [_row("AAPL", [{"name": "1M", "kind": "rolling", "pct_distance": 0.5,
+                           "in_range": True, "direction": "resistance"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.5% above 1M VWAP · acting as resistance"
+
+
 def test_only_nearest_level_alerts():
     rows = [_row("FN", [
-        {"name": "1M", "kind": "rolling", "pct_distance": 0.3, "in_range": True, "direction": "above"},
-        {"name": "3M", "kind": "rolling", "pct_distance": 1.9, "in_range": True, "direction": "above"},
+        {"name": "1M", "kind": "rolling", "pct_distance": 0.3, "in_range": True, "direction": "support"},
+        {"name": "3M", "kind": "rolling", "pct_distance": 1.9, "in_range": True, "direction": "resistance"},
     ])]
     out = alerts.build_vwap_alerts(rows)
     assert len(out) == 1
     assert "1M" in out[0]["text"]
 
 
-def test_reclaim_is_good_reject_is_bad_else_warn():
+def test_severity_mapping_for_all_real_directions():
     def sev(direction):
         rows = [_row("X", [{"name": "1M", "kind": "rolling", "pct_distance": 0.1,
                             "in_range": True, "direction": direction}])]
         return alerts.build_vwap_alerts(rows)[0]["severity"]
+    assert sev("support") == "good"
+    assert sev("resistance") == "bad"
     assert sev("reclaim") == "good"
     assert sev("reject") == "bad"
-    assert sev("above") == "warn"
+    assert sev("na") == "warn"
+
+
+def test_na_direction_omits_suffix_and_warns():
+    rows = [_row("AAPL", [{"name": "1M", "kind": "rolling", "pct_distance": 0.5,
+                           "in_range": True, "direction": "na"}])]
+    out = alerts.build_vwap_alerts(rows)
+    assert out[0]["text"] == "0.5% above 1M VWAP"
+    assert out[0]["severity"] == "warn"
 
 
 def test_out_of_range_produces_nothing():
     rows = [_row("CIEN", [{"name": "6M", "kind": "rolling", "pct_distance": 4.5,
-                           "in_range": False, "direction": "above"}], in_range_any=False)]
+                           "in_range": False, "direction": "resistance"}], in_range_any=False)]
     assert alerts.build_vwap_alerts(rows) == []
 
 
@@ -120,7 +142,7 @@ def test_missing_direction_omits_suffix_and_warns():
 
 def test_unrecognised_direction_omits_suffix_and_warns():
     rows = [_row("PLTR", [{"name": "1M", "kind": "rolling", "pct_distance": 0.5,
-                           "in_range": True, "direction": "sideways"}])]
+                           "in_range": True, "direction": "newthing"}])]
     out = alerts.build_vwap_alerts(rows)
     assert out[0]["text"] == "0.5% above 1M VWAP"
     assert out[0]["severity"] == "warn"
@@ -128,14 +150,14 @@ def test_unrecognised_direction_omits_suffix_and_warns():
 
 def test_pct_distance_zero_reads_above():
     rows = [_row("ORCL", [{"name": "1M", "kind": "rolling", "pct_distance": 0.0,
-                           "in_range": True, "direction": "above"}])]
-    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.0% above 1M VWAP"
+                           "in_range": True, "direction": "support"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.0% above 1M VWAP · acting as support"
 
 
 def test_in_range_any_true_but_no_level_flagged_produces_nothing():
     """Inconsistent data: in_range_any says True but every level's in_range is False."""
     rows = [_row("MSTR", [{"name": "1M", "kind": "rolling", "pct_distance": 4.0,
-                           "in_range": False, "direction": "above"}], in_range_any=True)]
+                           "in_range": False, "direction": "resistance"}], in_range_any=True)]
     assert alerts.build_vwap_alerts(rows) == []
 
 
