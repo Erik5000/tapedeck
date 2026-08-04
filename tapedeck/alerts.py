@@ -33,3 +33,45 @@ def build_alerts(rows, today):
             if 0 <= days <= EARNINGS_WINDOW_DAYS:
                 alerts.append({"ticker": ticker, "kind": "earnings", "text": f"earnings in {days}d", "severity": "warn"})
     return alerts
+
+
+_VWAP_SEVERITY = {"reclaim": "good", "reject": "bad"}
+_VWAP_DIRECTION = {"reclaim": "reclaiming", "reject": "rejecting"}
+
+
+def build_vwap_alerts(rows):
+    """One alert per ticker sitting within its watchlist's VWAP proximity band.
+
+    Only the nearest in-range level alerts: a name resting on three VWAPs at
+    once is one situation, not three chips. `in_range` is set by vwaplink
+    against the list's `vwap_alert_pct`, so this rule needs no threshold of
+    its own.
+
+    Defensive by design: any malformed or missing shape in `row["vwap"]`
+    (absent key, None, non-dict, missing/empty `levels`, an `in_range_any`
+    that doesn't line up with any individual level's `in_range`, an absent
+    or unrecognised `direction`) degrades to "no alert for that row" rather
+    than raising — this mirrors vwaplink's own degrade-never-raise contract.
+    """
+    out = []
+    for row in rows:
+        vwap = row.get("vwap")
+        if not isinstance(vwap, dict) or not vwap.get("in_range_any"):
+            continue
+        levels = vwap.get("levels")
+        if not isinstance(levels, list):
+            continue
+        level = next((lvl for lvl in levels if isinstance(lvl, dict) and lvl.get("in_range")), None)
+        if not level:
+            continue
+        pct = level.get("pct_distance")
+        if not isinstance(pct, (int, float)) or isinstance(pct, bool):
+            continue
+        side = "above" if pct >= 0 else "below"
+        text = f'{abs(pct):.1f}% {side} {level.get("name")} VWAP'
+        direction = _VWAP_DIRECTION.get(level.get("direction"))
+        if direction:
+            text += f" · {direction}"
+        out.append({"ticker": row.get("ticker"), "kind": "vwap", "text": text,
+                    "severity": _VWAP_SEVERITY.get(level.get("direction"), "warn")})
+    return out

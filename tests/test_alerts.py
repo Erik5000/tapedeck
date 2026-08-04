@@ -56,3 +56,100 @@ def test_earnings_beyond_7_days_quiet():
 def test_earnings_in_past_quiet():
     result = alerts.build_alerts([row(ticker="AMD", earnings_date="2026-07-20")], TODAY)
     assert result == []
+
+
+def _row(ticker, levels, in_range_any=True):
+    return {"ticker": ticker,
+            "vwap": {"score": None, "features": {}, "levels": levels,
+                     "nearest": levels[0], "in_range_any": in_range_any}}
+
+
+def test_in_range_level_produces_one_alert():
+    rows = [_row("CRDO", [{"name": "6M", "kind": "rolling", "pct_distance": -1.2,
+                           "in_range": True, "direction": "reclaim"}])]
+    out = alerts.build_vwap_alerts(rows)
+    assert len(out) == 1
+    assert out[0]["ticker"] == "CRDO"
+    assert out[0]["kind"] == "vwap"
+    assert out[0]["text"] == "1.2% below 6M VWAP · reclaiming"
+
+
+def test_above_level_reads_above():
+    rows = [_row("BE", [{"name": "1M", "kind": "rolling", "pct_distance": 0.8,
+                         "in_range": True, "direction": "reject"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.8% above 1M VWAP · rejecting"
+
+
+def test_only_nearest_level_alerts():
+    rows = [_row("FN", [
+        {"name": "1M", "kind": "rolling", "pct_distance": 0.3, "in_range": True, "direction": "above"},
+        {"name": "3M", "kind": "rolling", "pct_distance": 1.9, "in_range": True, "direction": "above"},
+    ])]
+    out = alerts.build_vwap_alerts(rows)
+    assert len(out) == 1
+    assert "1M" in out[0]["text"]
+
+
+def test_reclaim_is_good_reject_is_bad_else_warn():
+    def sev(direction):
+        rows = [_row("X", [{"name": "1M", "kind": "rolling", "pct_distance": 0.1,
+                            "in_range": True, "direction": direction}])]
+        return alerts.build_vwap_alerts(rows)[0]["severity"]
+    assert sev("reclaim") == "good"
+    assert sev("reject") == "bad"
+    assert sev("above") == "warn"
+
+
+def test_out_of_range_produces_nothing():
+    rows = [_row("CIEN", [{"name": "6M", "kind": "rolling", "pct_distance": 4.5,
+                           "in_range": False, "direction": "above"}], in_range_any=False)]
+    assert alerts.build_vwap_alerts(rows) == []
+
+
+def test_row_without_vwap_produces_nothing():
+    assert alerts.build_vwap_alerts([{"ticker": "NVDA", "vwap": None}]) == []
+    assert alerts.build_vwap_alerts([{"ticker": "NVDA"}]) == []
+
+
+def test_missing_direction_omits_suffix_and_warns():
+    rows = [_row("PLTR", [{"name": "1M", "kind": "rolling", "pct_distance": 0.5, "in_range": True}])]
+    out = alerts.build_vwap_alerts(rows)
+    assert out[0]["text"] == "0.5% above 1M VWAP"
+    assert out[0]["severity"] == "warn"
+
+
+def test_unrecognised_direction_omits_suffix_and_warns():
+    rows = [_row("PLTR", [{"name": "1M", "kind": "rolling", "pct_distance": 0.5,
+                           "in_range": True, "direction": "sideways"}])]
+    out = alerts.build_vwap_alerts(rows)
+    assert out[0]["text"] == "0.5% above 1M VWAP"
+    assert out[0]["severity"] == "warn"
+
+
+def test_pct_distance_zero_reads_above():
+    rows = [_row("ORCL", [{"name": "1M", "kind": "rolling", "pct_distance": 0.0,
+                           "in_range": True, "direction": "above"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.0% above 1M VWAP"
+
+
+def test_in_range_any_true_but_no_level_flagged_produces_nothing():
+    """Inconsistent data: in_range_any says True but every level's in_range is False."""
+    rows = [_row("MSTR", [{"name": "1M", "kind": "rolling", "pct_distance": 4.0,
+                           "in_range": False, "direction": "above"}], in_range_any=True)]
+    assert alerts.build_vwap_alerts(rows) == []
+
+
+def test_empty_levels_list_produces_nothing():
+    rows = [{"ticker": "SMCI", "vwap": {"score": None, "features": {}, "levels": [],
+                                        "nearest": None, "in_range_any": True}}]
+    assert alerts.build_vwap_alerts(rows) == []
+
+
+def test_vwap_missing_levels_key_produces_nothing_no_error():
+    rows = [{"ticker": "COIN", "vwap": {"score": None, "features": {}, "in_range_any": True}}]
+    assert alerts.build_vwap_alerts(rows) == []
+
+
+def test_vwap_not_a_dict_produces_nothing_no_error():
+    rows = [{"ticker": "RIOT", "vwap": "garbage"}]
+    assert alerts.build_vwap_alerts(rows) == []
