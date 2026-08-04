@@ -301,3 +301,70 @@ def _wait_idle(state, timeout=10):
             return
         time.sleep(0.02)
     raise AssertionError("job never finished")
+
+
+# ---------- parent-death watchdog ----------
+#
+# This is what makes "quitting the app stops the server" hold when the app is
+# force-quit or crashes, i.e. when its own terminate handler never runs.
+
+def _spawn_short_lived():
+    import subprocess
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.4)"])
+
+
+def _watch_until_death(pid, timeout=10, reap=None):
+    """Watch `pid`, reaping it meanwhile if it happens to be our own child.
+
+    An unreaped child lingers as a zombie, and os.kill(zombie, 0) still
+    succeeds — so the polling fallback would never see it go. Doesn't arise in
+    production: the watched parent is the app, which launchd reaps, not us.
+    """
+    fired = threading.Event()
+    threading.Thread(target=srv.watch_parent, args=(pid, fired.set), daemon=True).start()
+    if reap is not None:
+        reap.wait()
+    return fired.wait(timeout=timeout)
+
+
+def test_watch_parent_fires_when_the_parent_exits():
+    child = _spawn_short_lived()
+    assert _watch_until_death(child.pid, reap=child) is True
+
+
+def test_watch_parent_fires_immediately_for_an_already_dead_pid():
+    """The registration race: the parent may already be gone when we start."""
+    child = _spawn_short_lived()
+    child.kill()
+    child.wait()
+    assert _watch_until_death(child.pid, timeout=5) is True
+
+
+def test_watch_parent_falls_back_to_polling_without_kqueue(monkeypatch):
+    def no_kqueue():
+        raise OSError("kqueue unavailable")
+    monkeypatch.setattr(srv.select, "kqueue", no_kqueue)
+
+    child = _spawn_short_lived()
+    assert _watch_until_death(child.pid, reap=child) is True
+
+
+def test_watch_parent_does_not_fire_while_the_parent_lives():
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        fired = threading.Event()
+        threading.Thread(target=srv.watch_parent, args=(child.pid, fired.set),
+                         daemon=True).start()
+        assert fired.wait(timeout=1.5) is False
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_alive_tracks_a_real_process():
+    child = _spawn_short_lived()
+    assert srv._alive(child.pid) is True
+    child.kill()
+    child.wait()
+    assert srv._alive(child.pid) is False
