@@ -57,7 +57,7 @@ def main():
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
 
     from tapedeck import alerts as alerts_mod
-    from tapedeck import config, feed, fetch, metrics, pipeline, render, snapshot, tvscan, vaultlink
+    from tapedeck import config, feed, fetch, metrics, pipeline, render, snapshot, tvscan, vaultlink, vwaplink
 
     if args.new_list:
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
@@ -72,7 +72,8 @@ def main():
         watchlists = [{"name": stem,
                        "title": cfg["title"] or stem.replace("-", " ").replace("_", " ").title(),
                        "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
-                       "cockpit": cfg["cockpit"], "anti_basket": None}]
+                       "cockpit": cfg["cockpit"], "anti_basket": None,
+                       "vwap": cfg["vwap"], "vwap_alert_pct": cfg["vwap_alert_pct"]}]
     else:
         seeded = config.seed_watchlists(ROOT / "watchlists", ROOT / "examples")
         if seeded:
@@ -114,6 +115,8 @@ def main():
             print(f"warning: no benchmark history for {wl['benchmark']} ({wl['name']}) — RS shows n/a",
                   file=sys.stderr)
         rows, summary = pipeline.build_rows(hists, bench_close, infos, wl["holdings"], today, tv=tv)
+        vwap_feed = vwaplink.load_vwap(wl["vwap"]) if wl.get("vwap") else None
+        vwaplink.attach_vwap(rows, vwap_feed, wl.get("vwap_alert_pct") or vwaplink.DEFAULT_ALERT_PCT)
         alert_list = alerts_mod.build_alerts(rows, today)
         snap_dir = out_dir / "snapshots" / wl["name"]
         prev = snapshot.find_previous(snap_dir) if snap_dir.exists() else None
@@ -123,7 +126,8 @@ def main():
         rendered_lists.append({"name": wl["name"], "title": wl["title"], "benchmark": wl["benchmark"],
                                "rows": rows, "summary": summary, "alerts": alert_list, "diff": diff,
                                "cockpit": cockpit,
-                               "cockpit_fresh": vaultlink.cockpit_freshness(cockpit, today)})
+                               "cockpit_fresh": vaultlink.cockpit_freshness(cockpit, today),
+                               "vwap_fresh": vwaplink.vwap_freshness(vwap_feed, today)})
 
     # cross-list composition: baskets need every list's rows (the anti-basket is a sibling list)
     by_name = {r["name"]: r for r in rendered_lists}

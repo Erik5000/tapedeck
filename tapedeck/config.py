@@ -12,6 +12,8 @@ title: {title}
 benchmark: SPY
 # cockpit: /path/to/COCKPIT.md   # optional: render a read-only status panel parsed from this markdown file
 # anti_basket: other-list        # optional: aggregate that watchlist as an "anti-basket" row in the basket table
+# vwap: /path/to/vwap-latest.json  # optional: VWAP levels from a vwap-scanner --json-out feed
+# vwap_alert_pct: 2.0              # optional: proximity band (%) that earns an Alerts entry
 
 holdings:
   - ticker: NVDA
@@ -49,7 +51,9 @@ def load_config(path):
     return {"benchmark": str(raw.get("benchmark") or "SPY").upper(),
             "title": raw.get("title"), "order": raw.get("order"), "holdings": holdings,
             "cockpit": str(raw["cockpit"]) if raw.get("cockpit") else None,
-            "anti_basket": str(raw["anti_basket"]).strip() if raw.get("anti_basket") else None}
+            "anti_basket": str(raw["anti_basket"]).strip() if raw.get("anti_basket") else None,
+            "vwap": str(raw["vwap"]) if raw.get("vwap") else None,
+            "vwap_alert_pct": float(raw.get("vwap_alert_pct") or 2.0)}
 
 
 def load_watchlists(directory):
@@ -62,7 +66,8 @@ def load_watchlists(directory):
         title = cfg["title"] or path.stem.replace("-", " ").replace("_", " ").title()
         watchlists.append({"name": path.stem, "title": title, "order": cfg["order"],
                            "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
-                           "cockpit": cfg["cockpit"], "anti_basket": cfg["anti_basket"]})
+                           "cockpit": cfg["cockpit"], "anti_basket": cfg["anti_basket"],
+                           "vwap": cfg["vwap"], "vwap_alert_pct": cfg["vwap_alert_pct"]})
     if not watchlists:
         raise ValueError(f"no watchlists found in {directory} — add a .yaml file with a 'holdings' list")
     watchlists.sort(key=lambda w: (w["order"] is None, w["order"] if w["order"] is not None else 0, w["name"]))
