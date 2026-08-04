@@ -95,6 +95,47 @@ def test_directory_mode_attaches_vwap_before_alerts(tmp_path, monkeypatch):
     assert vwap_seen_by_alerts[0]["in_range_any"] is True
 
 
+def test_directory_mode_vwap_alert_pct_zero_reaches_attach_vwap_unchanged(tmp_path, monkeypatch):
+    """vwap_alert_pct: 0 is a legal, meaningful value ("alert only on an exact
+    touch"). Regression coverage for two bugs in the same spot: (1) config.py
+    using `raw.get(...) or 2.0` silently turned 0 into the 2.0 default, and
+    (2) tapedeck.py's `wl.get("vwap_alert_pct") or vwaplink.DEFAULT_ALERT_PCT`
+    would have reintroduced the same falsy-zero bug even after (1) was fixed.
+    This asserts the exact float 0.0 reaches vwaplink.attach_vwap, and that
+    the resulting in_range computation reflects a zero band (not the 2.0
+    default -- which would also mark this row in-range and mask the bug)."""
+    from tapedeck import vwaplink as vwaplink_mod
+
+    _stub_no_network(monkeypatch)
+    # price 101 vs level 100 -> pct_distance = 1.0%: in range for the 2.0
+    # default, but NOT in range for a true 0% band -- this distinguishes the
+    # bug (silently keeps 2.0) from the fix (uses 0.0).
+    feed_path = _write_feed(tmp_path)
+
+    wl_dir = tmp_path / "watchlists"
+    wl_dir.mkdir()
+    (wl_dir / "book.yaml").write_text(
+        f"vwap: {feed_path}\nvwap_alert_pct: 0\nholdings:\n  - ticker: NVDA\n")
+    (tmp_path / "output").mkdir()
+
+    captured_pct = []
+    real_attach_vwap = vwaplink_mod.attach_vwap
+
+    def spy_attach_vwap(rows, feed, alert_pct):
+        captured_pct.append(alert_pct)
+        return real_attach_vwap(rows, feed, alert_pct)
+
+    monkeypatch.setattr(vwaplink_mod, "attach_vwap", spy_attach_vwap)
+
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["tapedeck.py", "--no-open", "--source", "yahoo"])
+
+    cli.main()
+
+    assert captured_pct == [0.0]
+
+
 def test_directory_mode_missing_vwap_key_degrades_to_none(tmp_path, monkeypatch):
     """A watchlist with no vwap: key at all must still work (default None feed,
     default 2.0 alert_pct) -- this is the pre-feature behavior this task must

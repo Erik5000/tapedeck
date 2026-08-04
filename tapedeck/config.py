@@ -48,12 +48,16 @@ def load_config(path):
             "cost_basis": float(entry["cost_basis"]) if entry.get("cost_basis") is not None else None,
             "tv_symbol": entry.get("tv_symbol"),
         })
+    vwap_alert_pct = raw.get("vwap_alert_pct")
+    vwap_alert_pct = 2.0 if vwap_alert_pct is None else float(vwap_alert_pct)
+    if vwap_alert_pct < 0:
+        raise ValueError(f"vwap_alert_pct must be >= 0, got {vwap_alert_pct!r}")
     return {"benchmark": str(raw.get("benchmark") or "SPY").upper(),
             "title": raw.get("title"), "order": raw.get("order"), "holdings": holdings,
             "cockpit": str(raw["cockpit"]) if raw.get("cockpit") else None,
             "anti_basket": str(raw["anti_basket"]).strip() if raw.get("anti_basket") else None,
             "vwap": str(raw["vwap"]) if raw.get("vwap") else None,
-            "vwap_alert_pct": float(raw.get("vwap_alert_pct") or 2.0)}
+            "vwap_alert_pct": vwap_alert_pct}
 
 
 def load_watchlists(directory):

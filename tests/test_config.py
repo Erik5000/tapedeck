@@ -165,3 +165,24 @@ def test_vwap_keys_reach_watchlists(tmp_path):
     wl = config.load_watchlists(tmp_path)[0]
     assert wl["vwap"] == "/tmp/v.json"
     assert wl["vwap_alert_pct"] == 3.0
+
+
+def test_vwap_alert_pct_zero_is_preserved(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct: 0\nholdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap_alert_pct"] == 0.0
+
+
+def test_vwap_alert_pct_explicit_null_defaults_to_2pct(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct:\nholdings:\n  - ticker: NVDA\n")
+    cfg = config.load_config(p)
+    assert cfg["vwap_alert_pct"] == 2.0
+
+
+def test_vwap_alert_pct_negative_rejected(tmp_path):
+    p = tmp_path / "wl.yaml"
+    p.write_text("vwap_alert_pct: -3\nholdings:\n  - ticker: NVDA\n")
+    with pytest.raises(ValueError, match="vwap_alert_pct"):
+        config.load_config(p)

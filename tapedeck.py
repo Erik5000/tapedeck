@@ -116,7 +116,7 @@ def main():
                   file=sys.stderr)
         rows, summary = pipeline.build_rows(hists, bench_close, infos, wl["holdings"], today, tv=tv)
         vwap_feed = vwaplink.load_vwap(wl["vwap"]) if wl.get("vwap") else None
-        vwaplink.attach_vwap(rows, vwap_feed, wl.get("vwap_alert_pct") or vwaplink.DEFAULT_ALERT_PCT)
+        vwaplink.attach_vwap(rows, vwap_feed, wl["vwap_alert_pct"])
         alert_list = alerts_mod.build_alerts(rows, today)
         snap_dir = out_dir / "snapshots" / wl["name"]
         prev = snapshot.find_previous(snap_dir) if snap_dir.exists() else None
