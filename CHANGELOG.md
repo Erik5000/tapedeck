@@ -1,5 +1,32 @@
 # TAPEDECK Changelog
 
+## 2026-08-04 — VWAP levels integration
+- New optional watchlist keys `vwap: /path/to/vwap-latest.json` +
+  `vwap_alert_pct` (default 2.0) — attaches rolling and anchored VWAP levels
+  from a [vwap-scanner](../vwap-scanner) `--json-out` feed (schema 1), read
+  by new `tapedeck/vwaplink.py`. Strictly read-only, same degrade-never-raise
+  contract as `vaultlink.py`: a missing/malformed feed omits the levels with
+  a single stderr warning and the run continues.
+- Four new surfaces, all gated on `vwap:` being set (invisible otherwise):
+  a `VWAP` freshness chip showing the feed date, proximity entries in the
+  Alerts panel, four sortable columns behind a new VWAP toggle, a green left
+  edge on rows within the alert band, and a full levels ladder in the
+  expanded row with in-range levels highlighted.
+- Per-level distances (`pct_distance`, `z_stretch`, `in_range`) are
+  recomputed locally against tapedeck's live price on every run, so a
+  feed generated the night before stays accurate through the session;
+  `direction` is carried verbatim from the scan, since it's a bar-over-bar
+  classification tapedeck has no basis to recompute, and the ladder marks it
+  "(at scan)".
+- Live end-to-end verified against a real Twelve Data-backed scan (66
+  tickers, ~5.5 min cold) — confirmed the schema-1 JSON contract shape and
+  all four surfaces on a real watchlist, plus graceful degradation with the
+  feed file removed.
+- 87 new tests (184 total).
+- WHY: the FMFB book's thesis legs already live in tapedeck; VWAP proximity
+  is a mean-reversion signal worth seeing on the same page as price, RS and
+  the cockpit, without turning tapedeck into a second scanner.
+
 ## 2026-07-31 — Cockpit panel, basket monitor, stable JSON feed
 - New optional watchlist key `cockpit: /path/to/COCKPIT.md` — renders a
   read-only status panel (regime/freeze chips, triad legs, open decisions,
