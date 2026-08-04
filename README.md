@@ -2,8 +2,33 @@
 
 Self-contained multi-watchlist tracker inspired by the "Situational Awareness
 Holdings" table by [Lin @speculator_io](https://x.com/speculator_io). One
-command fetches live data for every watchlist and opens one interactive HTML
-dashboard with a tab per list — no server, no API key, nothing to sign up for.
+command fetches live data for every watchlist and writes one interactive HTML
+dashboard with a tab per list — no API key, nothing to sign up for.
+
+Run it as a CLI, or as a Mac app in your Dock.
+
+## The app
+
+```bash
+cd native && make install      # → ~/Applications/TAPEDECK.app
+```
+
+Its own Dock icon and window. Opening it starts a local server; quitting it
+stops that server. The dashboard gains two buttons in its controls row:
+**⟳ Refresh** (re-runs the fetch, ~20s) and **◇ Rescan VWAP** (re-runs
+[vwap-scanner](../vwap-scanner), ~8 min cold). Both stream the run's progress
+into a live status line and reload the page when it finishes; one job runs at
+a time. Launch is instant — it shows the last run and only fetches when asked.
+
+Needs Xcode plus `brew install xcodegen librsvg` once. Build details, the
+shutdown guarantees and the design notes are in [`native/README.md`](native/README.md).
+
+Without the app, `tapedeck.py --serve` gives the same page and buttons at
+`http://127.0.0.1:7360/`.
+
+Note: the app serves over `http://127.0.0.1` where a plain run opens `file://`.
+`localStorage` is scoped per origin, so the remembered tab and theme reset once
+on first launch.
 
 ## Setup & run
 
@@ -17,6 +42,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python3 tapedeck.py --json          # machine-readable summary to stdout
 # every run also writes the same feed to output/tapedeck-latest.json (stable path)
 .venv/bin/python3 tapedeck.py --no-open       # don't open the browser
+.venv/bin/python3 tapedeck.py --serve         # serve the last run at :7360 with Refresh buttons
 ```
 
 The first run seeds `watchlists/` from `examples/` (the public Situational
@@ -130,4 +156,11 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 `tapedeck/vaultlink.py` (read-only external status file) / `tapedeck/vwaplink.py`
 (read-only vwap-scanner feed) → `tapedeck/render.py`
 (self-contained HTML) + `tapedeck/feed.py` (JSON feed).
+
+The app sits alongside that, not inside it: `tapedeck/server.py` serves the
+already-rendered HTML with `tapedeck/appshell.js` injected, and runs refreshes
+through `tapedeck/jobs.py` as subprocesses — so the buttons run exactly the
+commands you'd run by hand, and the render path above is untouched.
+`native/` is the Swift shell around it.
+
 Tests: `.venv/bin/python3 -m pytest tests/`.
