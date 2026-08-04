@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from tapedeck import render
@@ -182,3 +183,126 @@ def test_page_shows_diff_since():
     diff = {"since": "2026-07-30", "movers": [{"ticker": "NVDA", "change_pct": 2.1}],
             "sma_flips": [], "added": [], "removed": []}
     assert "2026-07-30" in page(diff=diff)
+
+
+# --- vwap levels ---
+
+def vwap_data(**overrides):
+    level = {"name": "6M", "kind": "rolling", "value": 195.5, "sigma": 8.1,
+             "direction": "reclaim", "pct_distance": 1.22,
+             "in_range": True, "z_stretch": 0.29}
+    data = {"score": 0.72, "features": {"volume_z": 1.4},
+            "levels": [level], "nearest": level, "in_range_any": True}
+    data.update(overrides)
+    return data
+
+
+def vwap_page(vwap=None, fresh=None, second_row=True):
+    rows = [sample_row(vwap=vwap if vwap is not None else vwap_data())]
+    if second_row:
+        rows.append(empty_row(vwap=None))
+    section = wl("a", "A", rows)
+    if fresh is not None:
+        section["vwap_fresh"] = fresh
+    return render.render_multi([section], TODAY)
+
+
+def test_vwap_columns_render_nearest_level():
+    html = vwap_page()
+    assert 'data-key="vwap_level"' in html
+    assert "6M" in html
+    assert "0.72" in html
+
+
+def test_vwap_toggle_button_present_when_a_list_has_vwap():
+    html = vwap_page()
+    assert 'id="vwapbtn"' in html
+
+
+def test_no_vwap_columns_when_no_list_has_vwap():
+    html = render.render_multi([wl("a", "A", [sample_row()])], TODAY)
+    assert 'id="vwapbtn"' not in html
+    assert 'data-key="vwap_level"' not in html
+
+
+def test_ticker_without_vwap_renders_empty_cells_not_zero():
+    html = vwap_page()
+    assert '<td class="c-vwap a-r"></td>' in html
+
+
+def test_feed_chip_rendered_with_age():
+    html = vwap_page(fresh={"generated": "2026-07-20", "age_days": 14, "stale": True})
+    assert "levels from 2026-07-20" in html
+    assert "(14d)" in html
+    assert 'class="wltbl vwap-stale"' in html
+
+
+def test_fresh_feed_table_not_dimmed():
+    html = vwap_page(fresh={"generated": "2026-08-03", "age_days": 0, "stale": False})
+    assert 'class="wltbl"' in html
+
+
+def test_no_chip_without_freshness():
+    assert "levels from" not in vwap_page()
+
+
+# --- vwap edge cases ---
+
+def test_vwap_missing_zstretch_and_score_render_na_not_zero():
+    data = vwap_data()
+    data["nearest"] = {**data["nearest"], "z_stretch": None}
+    data["score"] = None
+    html = vwap_page(vwap=data, second_row=False)
+    # the sigma (z) and score columns both degrade to a bare n/a td; neither is "0"
+    assert html.count('<td class="c-vwap a-r">n/a</td>') == 2
+    assert '<td class="c-vwap a-r">0</td>' not in html
+    assert '<td class="c-vwap a-r">0.00</td>' not in html
+
+
+def test_vwap_level_missing_name_renders_na():
+    data = vwap_data()
+    data["nearest"] = {**data["nearest"], "name": None}
+    html = vwap_page(vwap=data, second_row=False)
+    assert '<td class="c-vwap a-l good" data-v="">n/a</td>' in html
+
+
+def test_feed_chip_generated_without_age_omits_day_suffix():
+    html = vwap_page(fresh={"generated": "2026-07-20", "age_days": None, "stale": False})
+    assert "levels from 2026-07-20</span>" in html
+    assert "levels from 2026-07-20 (" not in html
+
+
+def test_no_vwap_columns_when_every_row_lacks_vwap_data():
+    section = wl("a", "A", [sample_row(vwap=None), empty_row(vwap=None)])
+    html = render.render_multi([section], TODAY)
+    assert 'id="vwapbtn"' not in html
+    assert 'data-key="vwap_level"' not in html
+    assert 'class="c-vwap' not in html
+
+
+def test_page_renders_when_no_list_has_vwap_data():
+    html = render.render_multi(
+        [wl("a", "A", [sample_row()]), wl("b", "B", [empty_row()])], TODAY)
+    assert 'id="vwapbtn"' not in html
+    assert 'data-key="vwap_level"' not in html
+    assert "NVDA" in html
+
+
+def test_vwap_columns_only_render_on_list_with_data():
+    w1 = wl("a", "A", [sample_row(vwap=vwap_data())])
+    w2 = wl("b", "B", [sample_row(ticker="AAPL", name="Apple", vwap=None)])
+    html = render.render_multi([w1, w2], TODAY)
+    assert html.count('data-key="vwap_level"') == 1
+    assert 'id="vwapbtn"' in html
+
+
+def test_footer_column_count_matches_header_when_positions_present_but_no_vwap():
+    pos = {"market_value": 1000.0, "weight_pct": 5.0, "day_pnl": 10.0,
+           "open_pnl": 20.0, "open_pnl_pct": 2.0}
+    html = render.render_multi([wl("a", "A", [sample_row(position=pos)])], TODAY)
+    thead = re.search(r"<thead>(.*?)</thead>", html, re.S).group(1)
+    tfoot = re.search(r"<tfoot>(.*?)</tfoot>", html, re.S).group(1)
+    assert "c-vwap" not in thead and "c-vwap" not in tfoot
+    # ticker+name collapse into one colspan=2 <td> in the averages row, so the
+    # footer has exactly one fewer <td> than the header has <th>
+    assert thead.count("<th") - 1 == tfoot.count("<td")

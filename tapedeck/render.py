@@ -85,7 +85,7 @@ def offhigh_cell(v, max_off):
 
 # ---------- columns ----------
 
-CORE, EXT, POS = "", "c-ext", "c-pos"
+CORE, EXT, POS, VWAP = "", "c-ext", "c-pos", "c-vwap"
 
 COLUMNS = [
     {"key": "ticker",   "label": "Ticker",     "cls": CORE, "align": "l"},
@@ -115,6 +115,10 @@ COLUMNS = [
     {"key": "weight",   "label": "Wt%",        "cls": POS,  "align": "r"},
     {"key": "day_pnl",  "label": "Day P&L",    "cls": POS,  "align": "r"},
     {"key": "open_pnl", "label": "Open P&L",   "cls": POS,  "align": "r"},
+    {"key": "vwap_level", "label": "VWAP",     "cls": VWAP, "align": "l"},
+    {"key": "vwap_dist",  "label": "→VWAP",    "cls": VWAP, "align": "r"},
+    {"key": "vwap_z",     "label": "σ",        "cls": VWAP, "align": "r"},
+    {"key": "vwap_score", "label": "Score",    "cls": VWAP, "align": "r"},
 ]
 
 
@@ -238,6 +242,24 @@ def _cell(row, col, ctx):
         return _pnl_cell(pos.get("day_pnl"), col)
     if key == "open_pnl":
         return _pnl_cell(pos.get("open_pnl"), col, pct=pos.get("open_pnl_pct"))
+    if key.startswith("vwap_"):
+        vwap = row.get("vwap")
+        if not vwap:
+            return _td("", col)
+        nearest = vwap["nearest"]
+        if key == "vwap_level":
+            name = nearest.get("name")
+            cls = "good" if nearest["in_range"] else ""
+            content = h.escape(name) if name else "n/a"
+            return _td(content, col, v=name or "", extra_cls=cls)
+        if key == "vwap_dist":
+            pct = nearest["pct_distance"]
+            style = f"background:rgba(56,161,105,{heat_alpha(pct, 5.0):.3f})" if nearest["in_range"] else ""
+            return _td(fmt_pct(pct, 1), col, v=pct, style=style)
+        if key == "vwap_z":
+            return _td(fmt_num(nearest["z_stretch"], 2), col, v=nearest["z_stretch"])
+        if key == "vwap_score":
+            return _td(fmt_num(vwap["score"], 2), col, v=vwap["score"])
     raise KeyError(key)
 
 
@@ -362,6 +384,17 @@ def _cockpit_html(cockpit, fresh):
             f'<div class="chiprow">{"".join(chips)}</div>{table}</section>')
 
 
+def _vwap_chip(fresh):
+    """Age stamp for the VWAP feed. Empty string when no feed is attached."""
+    if not fresh or not fresh.get("generated"):
+        return ""
+    age = fresh.get("age_days")
+    cls = "warn" if fresh.get("stale") else ""
+    sub = f" ({age}d)" if age is not None else ""
+    return (f'<section class="panel"><span class="ptitle">VWAP</span>'
+            f'<span class="chip {cls}">levels from {h.escape(fresh["generated"])}{sub}</span></section>')
+
+
 def _baskets_html(baskets):
     """Cross-basket comparison table. Empty string below two baskets (nothing to compare)."""
     if len(baskets) < 2:
@@ -393,7 +426,7 @@ def _baskets_html(baskets):
             f'<tbody>{"".join(body)}</tbody></table></section>')
 
 
-def _averages_row(rows, has_pos):
+def _averages_row(rows, has_pos, has_vwap):
     def avg(key):
         vals = [r[key] for r in rows if r.get(key) is not None]
         return sum(vals) / len(vals) if vals else None
@@ -403,6 +436,8 @@ def _averages_row(rows, has_pos):
     cells = []
     for col in COLUMNS:
         if not has_pos and col["cls"] == POS:
+            continue
+        if not has_vwap and col["cls"] == VWAP:
             continue
         if col["key"] == "ticker":
             cells.append('<td class="a-l" colspan="2">Avg.</td>')
@@ -418,10 +453,12 @@ def _averages_row(rows, has_pos):
 def _section_html(wl, today):
     rows_sorted = sorted(wl["rows"], key=lambda r: (r["pct_1d"] is None, -(r["pct_1d"] or 0)))
     has_pos = any(r.get("position") for r in rows_sorted)
+    has_vwap = any(r.get("vwap") for r in rows_sorted)
     max_off = max((abs(r["pct_off_high"]) for r in rows_sorted if r["pct_off_high"] is not None), default=1.0)
     ctx = {"max_off": max_off, "today": today, "bench": wl["benchmark"], "n": len(rows_sorted)}
 
-    cols = [c for c in COLUMNS if has_pos or c["cls"] != POS]
+    cols = [c for c in COLUMNS
+            if (has_pos or c["cls"] != POS) and (has_vwap or c["cls"] != VWAP)]
     head = "".join(
         f'<th class="{" ".join(x for x in (c["cls"], "a-" + c["align"], "sortable") if x)}" '
         f'data-key="{c["key"]}">{c["label"]}</th>'
@@ -434,19 +471,21 @@ def _section_html(wl, today):
 
     meta = (f'<div class="lmeta">{len(rows_sorted)} names · bench {h.escape(wl["benchmark"])}'
             f' · RS vs {h.escape(wl["benchmark"])}</div>')
+    stale_cls = " vwap-stale" if (wl.get("vwap_fresh") or {}).get("stale") else ""
     section = (
         f'<section class="wl-section" data-wl="{h.escape(wl["name"])}">'
         + _summary_tiles(wl.get("summary"), rows_sorted)
         + _cockpit_html(wl.get("cockpit"), wl.get("cockpit_fresh"))
         + _baskets_html(wl.get("baskets") or [])
+        + _vwap_chip(wl.get("vwap_fresh"))
         + _alerts_html(wl.get("alerts") or [])
         + _diff_html(wl.get("diff"))
         + meta
-        + f'<div class="tablewrap"><table class="wltbl">'
+        + f'<div class="tablewrap"><table class="wltbl{stale_cls}">'
           f'<thead><tr>{head}</tr></thead>\n<tbody>\n{body}\n</tbody>'
-          f'<tfoot>{_averages_row(rows_sorted, has_pos)}</tfoot></table></div>'
+          f'<tfoot>{_averages_row(rows_sorted, has_pos, has_vwap)}</tfoot></table></div>'
         + '</section>')
-    return section, has_pos
+    return section, has_pos, has_vwap
 
 
 def render_page(rows, summary, alerts, diff, today, benchmark, data_date=None):
@@ -457,11 +496,12 @@ def render_page(rows, summary, alerts, diff, today, benchmark, data_date=None):
 
 
 def render_multi(lists, today, data_date=None):
-    sections, any_pos = [], False
+    sections, any_pos, any_vwap = [], False, False
     for wl in lists:
-        section, has_pos = _section_html(wl, today)
+        section, has_pos, has_vwap = _section_html(wl, today)
         sections.append(section)
         any_pos = any_pos or has_pos
+        any_vwap = any_vwap or has_vwap
 
     tabs_html = ""
     if len(lists) > 1:
@@ -471,6 +511,7 @@ def render_multi(lists, today, data_date=None):
 
     subtitle = lists[0]["title"] if len(lists) == 1 else f"{len(lists)} watchlists"
     pos_btn = '<button id="posbtn" class="tbtn">Positions</button>' if any_pos else ""
+    vwap_btn = '<button id="vwapbtn" class="tbtn">VWAP</button>' if any_vwap else ""
     date_label = today.strftime("%B %d, %Y")
     data_note = f' · last close {data_date}' if data_date else ""
     sections_html = "\n".join(sections)
@@ -606,6 +647,8 @@ footer .leg {{ white-space:nowrap; }}
 @media print {{ .controls, .hint, .wltabs {{ display:none; }} }}
 table.wltbl:not(.show-ext) .c-ext {{ display:none; }}
 table.wltbl:not(.show-pos) .c-pos {{ display:none; }}
+table.wltbl:not(.show-vwap) .c-vwap {{ display:none; }}
+.vwap-stale {{ opacity: .55; }}
 </style>
 </head>
 <body>
@@ -619,6 +662,7 @@ table.wltbl:not(.show-pos) .c-pos {{ display:none; }}
 <div class="controls">
   <button id="extbtn" class="tbtn">Extended</button>
   {pos_btn}
+  {vwap_btn}
   <button id="themebtn" class="tbtn">Theme: auto</button>
   <span class="hint">click a row for charts · click a column header to sort · hover cells for detail</span>
 </div>
@@ -679,6 +723,7 @@ table.wltbl:not(.show-pos) .c-pos {{ display:none; }}
   }}
   wireToggle('extbtn', 'show-ext');
   wireToggle('posbtn', 'show-pos');
+  wireToggle('vwapbtn', 'show-vwap');
 
   // --- watchlist tabs ---
   var tabs = Array.prototype.slice.call(document.querySelectorAll('.wtab'));
