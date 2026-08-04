@@ -265,6 +265,36 @@ def _cell(row, col, ctx):
 
 TV_TIMEFRAMES = (("12H", "720"), ("4H", "240"), ("1H", "60"))
 
+_LADDER_DIRECTION = {"reclaim": "reclaimed", "reject": "rejected",
+                     "above": "above", "below": "below"}
+_LVL_HIT = ' class="lvl-hit"'
+
+
+def _ladder_html(vwap):
+    """All VWAP levels for one ticker, nearest first. Empty when none attached.
+
+    `direction` is dated to the scan, not to now — vwaplink recomputes
+    distances against the live price but cannot recompute a bar-over-bar
+    classification, so the column says so.
+    """
+    if not vwap:
+        return ""
+    body = "".join(
+        f'<tr{_LVL_HIT if lvl["in_range"] else ""}>'
+        f'<td>{h.escape(lvl["name"]) if lvl.get("name") else "n/a"}</td>'
+        f'<td class="lvl-kind">{h.escape(lvl["kind"]) if lvl.get("kind") else ""}</td>'
+        f'<td class="a-r">{fmt_price(lvl["value"])}</td>'
+        f'<td class="a-r">{fmt_pct(lvl["pct_distance"], 1)}</td>'
+        f'<td class="a-r">{fmt_num(lvl["z_stretch"], 2)}</td>'
+        f'<td>{h.escape(_LADDER_DIRECTION.get(lvl.get("direction"), ""))}</td>'
+        f"</tr>"
+        for lvl in vwap["levels"])
+    return (f'<div class="vwapladder"><table>'
+            f'<thead><tr><th>Level</th><th>Kind</th><th class="a-r">Value</th>'
+            f'<th class="a-r">Dist</th><th class="a-r">σ</th>'
+            f'<th>Direction <span class="lvl-note">(at scan)</span></th></tr></thead>'
+            f"<tbody>{body}</tbody></table></div>")
+
 
 def _detail_row(row, ncols):
     symbol = row.get("tv_symbol") or row["ticker"]
@@ -273,9 +303,11 @@ def _detail_row(row, ncols):
         f'<div class="tvbox" data-tf="{tf}"></div></div>'
         for label, tf in TV_TIMEFRAMES)
     return (f'<tr class="detail" data-for="{h.escape(row["ticker"])}" hidden>'
-            f'<td colspan="{ncols}"><div class="tvpanel" data-symbol="{h.escape(symbol)}">'
-            f'<div class="tvhint">Loading TradingView charts…</div>'
-            f'<div class="tvcharts">{charts}</div></div></td></tr>')
+            f'<td colspan="{ncols}">'
+            + _ladder_html(row.get("vwap"))
+            + f'<div class="tvpanel" data-symbol="{h.escape(symbol)}">'
+              f'<div class="tvhint">Loading TradingView charts…</div>'
+              f'<div class="tvcharts">{charts}</div></div></td></tr>')
 
 
 # ---------- page sections ----------
@@ -464,7 +496,8 @@ def _section_html(wl, today):
         f'data-key="{c["key"]}">{c["label"]}</th>'
         for c in cols)
     body = "\n".join(
-        f'<tr class="mainrow" data-ticker="{h.escape(r["ticker"])}">'
+        f'<tr class="mainrow{" vwap-hit" if (r.get("vwap") or {}).get("in_range_any") else ""}" '
+        f'data-ticker="{h.escape(r["ticker"])}">'
         + "".join(_cell(r, c, ctx) for c in cols)
         + "</tr>\n" + _detail_row(r, len(cols))
         for r in rows_sorted)
@@ -650,6 +683,12 @@ table.wltbl:not(.show-pos) .c-pos {{ display:none; }}
 table.wltbl:not(.show-vwap) .c-vwap {{ display:none; }}
 .vwap-stale {{ opacity: .55; }}
 .c-vwap.good {{ color:var(--up); background:rgba(var(--up-rgb),.08); }}
+.vwapladder {{ margin: 0 0 10px; overflow-x: auto; }}
+.vwapladder table {{ border-collapse: collapse; font-size: 12px; }}
+.vwapladder th, .vwapladder td {{ padding: 3px 10px; white-space: nowrap; }}
+.vwapladder tr.lvl-hit {{ background: rgba(56,161,105,.14); font-weight: 600; }}
+.lvl-kind, .lvl-note {{ opacity: .6; font-weight: 400; }}
+tr.mainrow.vwap-hit td:first-child {{ box-shadow: inset 3px 0 0 #38a169; }}
 </style>
 </head>
 <body>

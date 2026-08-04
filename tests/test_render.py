@@ -266,6 +266,104 @@ def test_vwap_level_missing_name_renders_na():
     assert '<td class="c-vwap a-l good" data-v="">n/a</td>' in html
 
 
+# --- vwap ladder + row marker ---
+
+def test_ladder_lists_every_level_with_kind_and_value():
+    far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
+           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "z_stretch": None}
+    near = vwap_data()["levels"][0]
+    html = vwap_page(vwap_data(levels=[near, far], nearest=near))
+    assert 'class="vwapladder"' in html
+    assert "decade" in html and "anchored" in html
+    assert "$90.00" in html
+
+
+def test_ladder_highlights_in_range_rows():
+    assert 'class="lvl-hit"' in vwap_page()
+
+
+def test_ladder_absent_when_ticker_has_no_vwap():
+    html = render.render_multi([wl("a", "A", [sample_row()])], TODAY)
+    assert 'class="vwapladder"' not in html
+
+
+def test_ladder_labels_direction_as_scan_dated():
+    assert "(at scan)" in vwap_page()
+
+
+def test_main_row_marked_when_in_range():
+    assert 'class="mainrow vwap-hit"' in vwap_page()
+
+
+def test_main_row_unmarked_when_out_of_range():
+    cold = {"name": "6M", "kind": "rolling", "value": 195.5, "sigma": 8.1,
+            "direction": "above", "pct_distance": 4.4, "in_range": False,
+            "z_stretch": 0.29}
+    html = vwap_page(vwap_data(levels=[cold], nearest=cold, in_range_any=False))
+    assert 'class="mainrow vwap-hit"' not in html
+    assert 'class="lvl-hit"' not in html
+
+
+def test_ladder_out_of_range_row_has_no_class_attribute():
+    # An out-of-range ladder row must emit no class attribute at all,
+    # not an empty class="" — the markup shape the brief calls out.
+    far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
+           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "z_stretch": None}
+    near = vwap_data()["levels"][0]
+    html = vwap_page(vwap_data(levels=[near, far], nearest=near))
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert '<tr><td>decade</td>' in ladder
+    assert 'class=""' not in ladder
+
+
+def test_ladder_and_row_marker_classes_have_matching_css_rules():
+    # Same guard as the "good" chip regression from the prior task: a class
+    # emitted with no stylesheet rule targeting it is silently invisible.
+    html = vwap_page()
+    assert 'class="vwapladder"' in html and ".vwapladder {" in html
+    assert 'class="lvl-hit"' in html and "tr.lvl-hit {" in html
+    assert 'class="mainrow vwap-hit"' in html and "tr.mainrow.vwap-hit " in html
+
+
+def test_ladder_survives_malformed_level_fields():
+    # Upstream feed can hand back a level with name/kind/sigma/direction/z_stretch
+    # all None — must degrade to n/a-ish output, never raise on h.escape(None).
+    broken = {"name": None, "kind": None, "value": 100.0, "sigma": None,
+              "direction": None, "pct_distance": 0.5, "in_range": True,
+              "z_stretch": None}
+    html = vwap_page(vwap_data(levels=[broken], nearest=broken))
+    assert "$100.00" in html
+    assert 'class="vwapladder"' in html
+
+
+def test_ladder_row_count_matches_level_count():
+    near = vwap_data()["levels"][0]
+    far = {"name": "decade", "kind": "anchored", "value": 90.0, "sigma": None,
+           "direction": "above", "pct_distance": 119.9, "in_range": False,
+           "z_stretch": None}
+    html = vwap_page(vwap_data(levels=[near, far], nearest=near))
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert ladder.count("<tr") == 3  # 1 header row + 2 level rows
+
+
+def test_ladder_appears_above_tv_panel_in_detail_row():
+    html = vwap_page()
+    ladder_idx = html.index('class="vwapladder"')
+    tv_idx = html.index('class="tvpanel"')
+    assert ladder_idx < tv_idx
+
+
+def test_footer_column_count_unaffected_by_ladder():
+    # The ladder lives inside the detail row's colspan, not a real column,
+    # so header/footer <th>/<td> parity must be unaffected by its presence.
+    html = vwap_page()
+    thead = re.search(r"<thead>(.*?)</thead>", html, re.S).group(1)
+    tfoot = re.search(r"<tfoot>(.*?)</tfoot>", html, re.S).group(1)
+    assert thead.count("<th") - 1 == tfoot.count("<td")
+
+
 def test_feed_chip_generated_without_age_omits_day_suffix():
     html = vwap_page(fresh={"generated": "2026-07-20", "age_days": None, "stale": False})
     assert "levels from 2026-07-20</span>" in html
