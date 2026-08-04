@@ -14,6 +14,7 @@ import json
 import os
 import re
 import select
+import signal
 import sys
 import threading
 import time
@@ -300,6 +301,17 @@ def main(argv=None):
     httpd = make_server(args.host, args.port, state)
     print(f"[tapedeck] serving http://{args.host}:{args.port}/  repo={state.root} "
           f"parent={args.parent_pid or '-'}", flush=True)
+
+    # The app SIGTERMs us on quit. Without this, Python's default action exits
+    # immediately and leaves any running job orphaned — an 8-minute VWAP scan
+    # would carry on fetching long after the window closed.
+    def _on_signal(signum, _frame):
+        print(f"[tapedeck] signal {signum} — stopping", flush=True)
+        state.jobs.terminate(grace=2.0)
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, _on_signal)
 
     if args.parent_pid:
         def _die():

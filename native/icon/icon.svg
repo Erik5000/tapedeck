@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- TAPEDECK — a cassette whose reel window reads as a sparkline. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2a27"/>
+      <stop offset="1" stop-color="#131312"/>
+    </linearGradient>
+    <linearGradient id="tape" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9f9f7"/>
+      <stop offset="1" stop-color="#e6e5e0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="228" fill="url(#body)"/>
+  <rect x="96" y="188" width="832" height="648" rx="56" fill="#1f1e1c"
+        stroke="#3a3936" stroke-width="8"/>
+
+  <!-- label strip -->
+  <rect x="152" y="240" width="720" height="132" rx="20" fill="url(#tape)"/>
+  <text x="512" y="332" text-anchor="middle" font-family="Helvetica,Arial,sans-serif"
+        font-size="76" font-weight="700" letter-spacing="14" fill="#131312">TAPEDECK</text>
+
+  <!-- reel window: the sparkline lives where the tape would show -->
+  <rect x="152" y="410" width="720" height="248" rx="20" fill="#0d0d0d"
+        stroke="#3a3936" stroke-width="6"/>
+  <polyline points="200,600 268,566 336,588 404,506 472,540 540,452 608,486 676,418 744,470 824,436"
+            fill="none" stroke="#38a169" stroke-width="26"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="824" cy="436" r="30" fill="#38a169"/>
+
+  <!-- hub holes, so it still reads as a cassette at 16px -->
+  <circle cx="330" cy="726" r="58" fill="#0d0d0d" stroke="#3a3936" stroke-width="8"/>
+  <circle cx="694" cy="726" r="58" fill="#0d0d0d" stroke="#3a3936" stroke-width="8"/>
+  <circle cx="330" cy="726" r="20" fill="#3a3936"/>
+  <circle cx="694" cy="726" r="20" fill="#3a3936"/>
+</svg>
