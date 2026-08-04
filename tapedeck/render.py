@@ -649,6 +649,7 @@ table.wltbl:not(.show-ext) .c-ext {{ display:none; }}
 table.wltbl:not(.show-pos) .c-pos {{ display:none; }}
 table.wltbl:not(.show-vwap) .c-vwap {{ display:none; }}
 .vwap-stale {{ opacity: .55; }}
+.c-vwap.good {{ color:var(--up); background:rgba(var(--up-rgb),.08); }}
 </style>
 </head>
 <body>

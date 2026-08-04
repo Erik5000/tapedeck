@@ -306,3 +306,12 @@ def test_footer_column_count_matches_header_when_positions_present_but_no_vwap()
     # ticker+name collapse into one colspan=2 <td> in the averages row, so the
     # footer has exactly one fewer <td> than the header has <th>
     assert thead.count("<th") - 1 == tfoot.count("<td")
+
+
+def test_vwap_in_range_good_class_has_a_matching_css_rule():
+    # Guards against a class that's emitted but never styled (and vice versa):
+    # the markup must carry the "good" class on an in-range vwap_level cell,
+    # AND the stylesheet must contain a rule that actually targets it.
+    html = vwap_page()
+    assert '<td class="c-vwap a-l good" data-v="6M">6M</td>' in html
+    assert ".c-vwap.good {" in html
