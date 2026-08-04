@@ -15,6 +15,7 @@ derives from its own prior close, and tapedeck has no equivalent basis for it.
 """
 
 import json
+import math
 import sys
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,22 @@ STALE_DAYS = 7
 DEFAULT_ALERT_PCT = 2.0
 
 _LEVEL_KEYS = ("name", "kind", "value", "sigma", "direction")
+
+
+def _finite_number(x):
+    """Coerce ``x`` to a finite float, or None if it isn't a usable real
+    number. Rejects bool (a Python int subclass, so ``float(True) == 1.0``
+    would otherwise silently pass as a value) and non-finite floats — the
+    JSON parser accepts the out-of-spec ``NaN``/``Infinity`` tokens, and a
+    non-finite value would otherwise poison ``pct_distance`` and the sort
+    that picks ``nearest``."""
+    if isinstance(x, bool) or x is None:
+        return None
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
 
 
 def load_vwap(path):
@@ -52,7 +69,7 @@ def vwap_freshness(feed, today):
     if stamp:
         try:
             generated = date.fromisoformat(str(stamp)[:10])
-            age = (today - generated).days
+            age = max(0, (today - generated).days)
         except (ValueError, TypeError):
             generated = None
     return {"generated": generated.isoformat() if generated else None,
@@ -84,9 +101,8 @@ def attach_vwap(rows, feed, alert_pct):
 def _for_row(entry, price, alert_pct):
     if not entry or price is None:
         return None
-    try:
-        price = float(price)
-    except (TypeError, ValueError):
+    price = _finite_number(price)
+    if price is None:
         return None
     levels = []
     raw_levels = entry.get("levels")
@@ -95,19 +111,11 @@ def _for_row(entry, price, alert_pct):
     for raw in raw_levels:
         if not isinstance(raw, dict):
             continue
-        value = raw.get("value")
-        try:
-            if value is None:
-                continue
-            value = float(value)
-        except (TypeError, ValueError):
+        value = _finite_number(raw.get("value"))
+        if value is None or value <= 0:
             continue
-        if value <= 0:
-            continue
-        sigma = raw.get("sigma")
-        try:
-            sigma = float(sigma) if sigma is not None else None
-        except (TypeError, ValueError):
+        sigma = _finite_number(raw.get("sigma"))
+        if sigma is not None and sigma <= 0:
             sigma = None
         pct_distance = (price - value) / value * 100
         levels.append({**{k: raw.get(k) for k in _LEVEL_KEYS},

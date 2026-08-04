@@ -254,3 +254,79 @@ def test_freshness_generated_non_string_type_degrades_to_none_age():
     fresh = vwaplink.vwap_freshness({**FEED, "generated": 20260803}, date(2026, 8, 3))
     assert fresh["age_days"] is None
     assert fresh["stale"] is False
+
+
+# ---------- review round 1: non-finite / bool / negative-sigma / future-dated feed ----------
+
+def test_nan_level_value_is_excluded_and_does_not_poison_nearest(tmp_path):
+    # A NaN level sits alongside a legitimate near level. json.loads accepts
+    # the out-of-spec NaN token, nan <= 0 is False (all NaN comparisons are
+    # false), so a naive `value <= 0` guard lets it through and a
+    # comparison-based sort on a NaN key is undefined. The legitimate level
+    # must win `nearest` and the NaN level must not appear in `levels` at all.
+    feed = {**FEED, "tickers": {"CRDO": {
+        "price": 190.0, "score": 0.5, "features": {},
+        "levels": [
+            {"name": "poison", "kind": "rolling", "value": float("nan"),
+             "sigma": None, "direction": "above"},
+            {"name": "6M", "kind": "rolling", "value": 195.50,
+             "sigma": 8.1, "direction": "reclaim"},
+        ]}}}
+    path = _write(tmp_path, feed)
+    loaded = vwaplink.load_vwap(path)
+    rows = [{"ticker": "CRDO", "price": 197.88}]
+    vwaplink.attach_vwap(rows, loaded, 2.0)
+    names = [lvl["name"] for lvl in rows[0]["vwap"]["levels"]]
+    assert names == ["6M"]
+    assert rows[0]["vwap"]["nearest"]["name"] == "6M"
+
+
+def test_infinite_level_value_is_excluded():
+    rows = [{"ticker": "CRDO", "price": 197.88}]
+    feed = {**FEED, "tickers": {"CRDO": {
+        "price": 190.0, "score": 0.5, "features": {},
+        "levels": [{"name": "bad", "kind": "rolling", "value": float("inf"),
+                    "sigma": None, "direction": "above"},
+                   {"name": "6M", "kind": "rolling", "value": 195.50,
+                    "sigma": 8.1, "direction": "reclaim"}]}}}
+    vwaplink.attach_vwap(rows, feed, 2.0)
+    assert [lvl["name"] for lvl in rows[0]["vwap"]["levels"]] == ["6M"]
+
+
+def test_non_finite_row_price_degrades_to_none():
+    rows = [{"ticker": "CRDO", "price": float("nan")}]
+    vwaplink.attach_vwap(rows, FEED, 2.0)
+    assert rows[0]["vwap"] is None
+
+
+def test_bool_level_value_is_rejected():
+    # bool is an int subclass in Python, so float(True) == 1.0 would
+    # otherwise silently pass as a legitimate level value.
+    rows = [{"ticker": "CRDO", "price": 197.88}]
+    feed = {**FEED, "tickers": {"CRDO": {
+        "price": 190.0, "score": 0.5, "features": {},
+        "levels": [{"name": "bad", "kind": "rolling", "value": True,
+                    "sigma": None, "direction": "above"}]}}}
+    vwaplink.attach_vwap(rows, feed, 2.0)
+    assert rows[0]["vwap"] is None
+
+
+def test_negative_sigma_does_not_invert_z_stretch():
+    # A negative sigma is not a valid standard deviation — the feed is
+    # broken, so no z_stretch should be computed from it at all (not a
+    # sign-inverted one).
+    rows = [{"ticker": "CRDO", "price": 197.88}]
+    feed = {**FEED, "tickers": {"CRDO": {
+        "price": 190.0, "score": 0.5, "features": {},
+        "levels": [{"name": "6M", "kind": "rolling", "value": 195.50,
+                    "sigma": -8.1, "direction": "reclaim"}]}}}
+    vwaplink.attach_vwap(rows, feed, 2.0)
+    lvl = rows[0]["vwap"]["nearest"]
+    assert lvl["z_stretch"] is None
+    assert lvl["sigma"] is None
+
+
+def test_freshness_future_dated_generated_clamps_age_to_zero():
+    fresh = vwaplink.vwap_freshness({**FEED, "generated": "2026-08-10"}, date(2026, 8, 3))
+    assert fresh["age_days"] == 0
+    assert fresh["stale"] is False
