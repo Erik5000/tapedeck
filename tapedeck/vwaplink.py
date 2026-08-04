@@ -22,9 +22,18 @@ from pathlib import Path
 
 SCHEMA = 1
 STALE_DAYS = 7
-DEFAULT_ALERT_PCT = 2.0
 
 _LEVEL_KEYS = ("name", "kind", "value", "sigma", "direction")
+
+# Canonical vocabulary for the schema-1 contract's `direction` and `kind`
+# fields, verified against a live vwap-scanner run. This is the single
+# source of truth for "what values can these fields take" — alerts.py's
+# severity/phrasing maps and render.py's ladder wording/kind-display maps
+# both import these and assert their own keys are a subset, so a vocabulary
+# change that isn't reflected in one of those presentation maps fails a test
+# immediately instead of silently blanking a surface.
+DIRECTIONS = ("support", "resistance", "reclaim", "reject", "na")
+KINDS = ("fib", "rolling", "anchored", "atl_anchored", "ath_anchored")
 
 
 def _finite_number(x):

@@ -2,6 +2,8 @@
 
 from datetime import date
 
+from . import vwaplink
+
 GAP_THRESHOLD_PCT = 5.0
 EARNINGS_WINDOW_DAYS = 7
 
@@ -38,6 +40,8 @@ def build_alerts(rows, today):
 _VWAP_SEVERITY = {"reclaim": "good", "reject": "bad", "support": "good", "resistance": "bad"}
 _VWAP_DIRECTION = {"reclaim": "reclaiming", "reject": "rejecting",
                     "support": "acting as support", "resistance": "acting as resistance"}
+assert set(_VWAP_SEVERITY) <= set(vwaplink.DIRECTIONS)
+assert set(_VWAP_DIRECTION) <= set(vwaplink.DIRECTIONS)
 
 
 def build_vwap_alerts(rows):
@@ -69,7 +73,11 @@ def build_vwap_alerts(rows):
         if not isinstance(pct, (int, float)) or isinstance(pct, bool):
             continue
         side = "above" if pct >= 0 else "below"
-        text = f'{abs(pct):.1f}% {side} {level.get("name")} VWAP'
+        name = level.get("name") or "n/a"
+        # A fib retracement/extension is a static price projection, not a VWAP
+        # line — only append "VWAP" for kinds that actually are one.
+        suffix = "" if level.get("kind") == "fib" else " VWAP"
+        text = f'{abs(pct):.1f}% {side} {name}{suffix}'
         direction = _VWAP_DIRECTION.get(level.get("direction"))
         if direction:
             text += f" · {direction}"

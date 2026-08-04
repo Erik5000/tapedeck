@@ -2,9 +2,14 @@
 
 ## 2026-08-04 — VWAP levels integration
 - New optional watchlist keys `vwap: /path/to/vwap-latest.json` +
-  `vwap_alert_pct` (default 2.0) — attaches rolling and anchored VWAP levels
-  from a [vwap-scanner](../vwap-scanner) `--json-out` feed (schema 1), read
-  by new `tapedeck/vwaplink.py`. Strictly read-only, same degrade-never-raise
+  `vwap_alert_pct` (default 2.0) — attaches VWAP and VWAP-adjacent levels
+  (rolling, anchored, ATH/anchored, ATL-anchored, and static fib
+  retracement/extension projections) from a [vwap-scanner](../vwap-scanner)
+  `--json-out` feed (schema 1), read by new `tapedeck/vwaplink.py`. On a
+  live 64-ticker/893-level scan the mix is roughly 36% fib and 15%
+  ATH/ATL-anchored, so the fib/anchored kinds are not a minor case — a fib
+  level is labeled distinctly from a true VWAP line (see the "fib
+  mislabeling" fix below). Strictly read-only, same degrade-never-raise
   contract as `vaultlink.py`: a missing/malformed feed omits the levels with
   a single stderr warning and the run continues.
 - Four new surfaces, all gated on `vwap:` being set (invisible otherwise):
@@ -22,10 +27,56 @@
   tickers, ~5.5 min cold) — confirmed the schema-1 JSON contract shape and
   all four surfaces on a real watchlist, plus graceful degradation with the
   feed file removed.
-- 87 new tests (184 total).
+- New tests across this integration (initial build + the direction-vocabulary
+  fix + this final fix wave): 199 total (up from 97 before it started).
 - WHY: the FMFB book's thesis legs already live in tapedeck; VWAP proximity
   is a mean-reversion signal worth seeing on the same page as price, RS and
   the cockpit, without turning tapedeck into a second scanner.
+
+## 2026-08-04 — VWAP integration final fix wave
+- Fib levels were being suffixed " VWAP" in the proximity alert text (e.g.
+  "0.4% above Fib 0.786 VWAP") — a fib retracement/extension is a static
+  price projection, not a VWAP line. `alerts.py` now only appends " VWAP"
+  when the level's `kind` isn't `fib`; a missing level `name` now renders
+  `n/a` instead of the literal string `None`.
+- The levels ladder was leaking the raw `kind` enum value verbatim
+  (`ath_anchored`, `atl_anchored`) into the page. `render.py` now has a
+  small display map (`ath_anchored` → "ATH-anchored", etc.) with a
+  pass-through fallback, so an unrecognised future `kind` still displays
+  rather than blanking.
+- The proximity heat scale (`vwap_dist` column, the green background tint)
+  used a fixed cap of 5.0 regardless of the list's own `vwap_alert_pct`
+  (default 2.0) — the in-range band that heat is supposed to represent — so
+  the strongest possible hit only ever reached ~55% intensity. The cap is
+  now the list's own `vwap_alert_pct`.
+- The VWAP-level column header sorted with `parseFloat`, so numeric-prefixed
+  names ("1M Rolling") and non-numeric ones ("Fib 0.618") interleaved
+  meaninglessly. That column is now marked non-sortable.
+- The canonical `direction`/`kind` vocabularies (verified against a live
+  vwap-scanner feed: `direction` ∈ {support, resistance, reclaim, reject,
+  na}; `kind` ∈ {fib, rolling, anchored, atl_anchored, ath_anchored}) now
+  live once in `tapedeck/vwaplink.py`; `alerts.py` and `render.py` import
+  them and assert their own presentation maps are a subset, so a vocabulary
+  drift fails a test instead of silently blanking a surface.
+- Dead code: `vwaplink.DEFAULT_ALERT_PCT` (referenced nowhere — `config.py`
+  is the single source of the 2.0 default) removed.
+- `output/tapedeck-latest.json` — the stable feed contract external
+  consumers (e.g. a morning-brief pipeline) read — now includes `kind:
+  "vwap"` alerts (from `build_vwap_alerts`) alongside the existing alert
+  kinds. On a live watchlist this was 16 of 31 alerts for one list, roughly
+  doubling alert volume; a consumer parsing `alerts` by `kind` should expect
+  it.
+- 9 new tests (199 total) covering the above plus a `sigma == 0` → `None`
+  z-stretch regression (reachable for sub-dollar names) and corrected
+  `test_vwaplink.py`/`test_tapedeck_cli.py` fixtures — these previously
+  hand-invented `direction: "above"` (never produced by the scanner),
+  `score: 0.72` (the real contract is 0-100), and a flat `regime_er` key
+  (the real shape nests `features.regime.{er,trend_up,label}`). Fixture
+  values are now taken verbatim from a real 64-ticker/893-level scan.
+- WHY: a whole-branch review found the plan's fixtures had invented feed
+  vocabulary the live scanner never produces — the same class of bug already
+  caught once for `direction` was still live for `score`/`features`, plus a
+  handful of smaller display/consistency issues.
 
 ## 2026-07-31 — Cockpit panel, basket monitor, stable JSON feed
 - New optional watchlist key `cockpit: /path/to/COCKPIT.md` — renders a

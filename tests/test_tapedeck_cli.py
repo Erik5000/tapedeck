@@ -30,9 +30,9 @@ def _write_feed(tmp_path):
         "schema": 1,
         "generated": "2026-08-03",
         "tickers": {
-            "NVDA": {"score": 0.5, "levels": [
+            "NVDA": {"score": 55.0, "levels": [
                 {"name": "anchor", "kind": "anchored", "value": 100.0,
-                 "sigma": None, "direction": "above"},
+                 "sigma": None, "direction": "na"},
             ]},
         },
     }))
@@ -97,13 +97,12 @@ def test_directory_mode_attaches_vwap_before_alerts(tmp_path, monkeypatch):
 
 def test_directory_mode_vwap_alert_pct_zero_reaches_attach_vwap_unchanged(tmp_path, monkeypatch):
     """vwap_alert_pct: 0 is a legal, meaningful value ("alert only on an exact
-    touch"). Regression coverage for two bugs in the same spot: (1) config.py
-    using `raw.get(...) or 2.0` silently turned 0 into the 2.0 default, and
-    (2) tapedeck.py's `wl.get("vwap_alert_pct") or vwaplink.DEFAULT_ALERT_PCT`
-    would have reintroduced the same falsy-zero bug even after (1) was fixed.
-    This asserts the exact float 0.0 reaches vwaplink.attach_vwap, and that
-    the resulting in_range computation reflects a zero band (not the 2.0
-    default -- which would also mark this row in-range and mask the bug)."""
+    touch"). Regression coverage for config.py's `vwap_alert_pct = raw.get(...)
+    ` followed by an explicit `is None` check rather than `or 2.0`, which
+    would have silently turned 0 into the 2.0 default. This asserts the exact
+    float 0.0 reaches vwaplink.attach_vwap, and that the resulting in_range
+    computation reflects a zero band (not the 2.0 default -- which would also
+    mark this row in-range and mask the bug)."""
     from tapedeck import vwaplink as vwaplink_mod
 
     _stub_no_network(monkeypatch)

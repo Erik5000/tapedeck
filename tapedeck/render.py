@@ -4,6 +4,8 @@
 import html as h
 from datetime import date
 
+from . import vwaplink
+
 # ---------- formatting ----------
 
 def fmt_cap(v):
@@ -115,7 +117,7 @@ COLUMNS = [
     {"key": "weight",   "label": "Wt%",        "cls": POS,  "align": "r"},
     {"key": "day_pnl",  "label": "Day P&L",    "cls": POS,  "align": "r"},
     {"key": "open_pnl", "label": "Open P&L",   "cls": POS,  "align": "r"},
-    {"key": "vwap_level", "label": "VWAP",     "cls": VWAP, "align": "l"},
+    {"key": "vwap_level", "label": "VWAP",     "cls": VWAP, "align": "l", "sortable": False},
     {"key": "vwap_dist",  "label": "→VWAP",    "cls": VWAP, "align": "r"},
     {"key": "vwap_z",     "label": "σ",        "cls": VWAP, "align": "r"},
     {"key": "vwap_score", "label": "Score",    "cls": VWAP, "align": "r"},
@@ -254,7 +256,9 @@ def _cell(row, col, ctx):
             return _td(content, col, v=name or "", extra_cls=cls)
         if key == "vwap_dist":
             pct = nearest["pct_distance"]
-            style = f"background:rgba(56,161,105,{heat_alpha(pct, 5.0):.3f})" if nearest["in_range"] else ""
+            cap = ctx.get("vwap_alert_pct")
+            cap = 2.0 if cap is None else cap
+            style = f"background:rgba(56,161,105,{heat_alpha(pct, cap):.3f})" if nearest["in_range"] else ""
             return _td(fmt_pct(pct, 1), col, v=pct, style=style)
         if key == "vwap_z":
             return _td(fmt_num(nearest["z_stretch"], 2), col, v=nearest["z_stretch"])
@@ -267,6 +271,13 @@ TV_TIMEFRAMES = (("12H", "720"), ("4H", "240"), ("1H", "60"))
 
 _LADDER_DIRECTION = {"reclaim": "reclaimed", "reject": "rejected",
                      "support": "support", "resistance": "resistance"}
+assert set(_LADDER_DIRECTION) <= set(vwaplink.DIRECTIONS)
+
+# Friendlier display for enum-ish `kind` values; anything not listed here
+# (including an unknown future kind) passes through verbatim rather than
+# blanking — the opposite failure mode from an unmapped `direction`.
+_LADDER_KIND = {"ath_anchored": "ATH-anchored", "atl_anchored": "ATL-anchored"}
+assert set(_LADDER_KIND) <= set(vwaplink.KINDS)
 _LVL_HIT = ' class="lvl-hit"'
 
 
@@ -282,7 +293,7 @@ def _ladder_html(vwap):
     body = "".join(
         f'<tr{_LVL_HIT if lvl["in_range"] else ""}>'
         f'<td>{h.escape(lvl["name"]) if lvl.get("name") else "n/a"}</td>'
-        f'<td class="lvl-kind">{h.escape(lvl["kind"]) if lvl.get("kind") else ""}</td>'
+        f'<td class="lvl-kind">{h.escape(_LADDER_KIND.get(lvl.get("kind"), lvl.get("kind"))) if lvl.get("kind") else ""}</td>'
         f'<td class="a-r">{fmt_price(lvl["value"])}</td>'
         f'<td class="a-r">{fmt_pct(lvl["pct_distance"], 1)}</td>'
         f'<td class="a-r">{fmt_num(lvl["z_stretch"], 2)}</td>'
@@ -487,12 +498,13 @@ def _section_html(wl, today):
     has_pos = any(r.get("position") for r in rows_sorted)
     has_vwap = any(r.get("vwap") for r in rows_sorted)
     max_off = max((abs(r["pct_off_high"]) for r in rows_sorted if r["pct_off_high"] is not None), default=1.0)
-    ctx = {"max_off": max_off, "today": today, "bench": wl["benchmark"], "n": len(rows_sorted)}
+    ctx = {"max_off": max_off, "today": today, "bench": wl["benchmark"], "n": len(rows_sorted),
+           "vwap_alert_pct": wl.get("vwap_alert_pct")}
 
     cols = [c for c in COLUMNS
             if (has_pos or c["cls"] != POS) and (has_vwap or c["cls"] != VWAP)]
     head = "".join(
-        f'<th class="{" ".join(x for x in (c["cls"], "a-" + c["align"], "sortable") if x)}" '
+        f'<th class="{" ".join(x for x in (c["cls"], "a-" + c["align"], "sortable" if c.get("sortable", True) else "") if x)}" '
         f'data-key="{c["key"]}">{c["label"]}</th>'
         for c in cols)
     body = "\n".join(

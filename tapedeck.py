@@ -127,7 +127,8 @@ def main():
                                "rows": rows, "summary": summary, "alerts": alert_list, "diff": diff,
                                "cockpit": cockpit,
                                "cockpit_fresh": vaultlink.cockpit_freshness(cockpit, today),
-                               "vwap_fresh": vwaplink.vwap_freshness(vwap_feed, today)})
+                               "vwap_fresh": vwaplink.vwap_freshness(vwap_feed, today),
+                               "vwap_alert_pct": wl["vwap_alert_pct"]})
 
     # cross-list composition: baskets need every list's rows (the anti-basket is a sibling list)
     by_name = {r["name"]: r for r in rendered_lists}

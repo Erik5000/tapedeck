@@ -148,6 +148,26 @@ def test_unrecognised_direction_omits_suffix_and_warns():
     assert out[0]["severity"] == "warn"
 
 
+def test_fib_kind_omits_vwap_suffix():
+    # A fib retracement/extension is a static price projection, not a VWAP
+    # line — "Fib 0.786" must read on its own, not "Fib 0.786 VWAP".
+    rows = [_row("CRDO", [{"name": "Fib 0.786", "kind": "fib", "pct_distance": 0.4,
+                           "in_range": True, "direction": "support"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.4% above Fib 0.786 · acting as support"
+
+
+def test_non_fib_kind_keeps_vwap_suffix():
+    rows = [_row("CRDO", [{"name": "6M Rolling", "kind": "rolling", "pct_distance": 0.4,
+                           "in_range": True, "direction": "support"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.4% above 6M Rolling VWAP · acting as support"
+
+
+def test_missing_level_name_renders_na():
+    rows = [_row("CRDO", [{"name": None, "kind": "rolling", "pct_distance": 0.4,
+                           "in_range": True, "direction": "support"}])]
+    assert alerts.build_vwap_alerts(rows)[0]["text"] == "0.4% above n/a VWAP · acting as support"
+
+
 def test_pct_distance_zero_reads_above():
     rows = [_row("ORCL", [{"name": "1M", "kind": "rolling", "pct_distance": 0.0,
                            "in_range": True, "direction": "support"}])]

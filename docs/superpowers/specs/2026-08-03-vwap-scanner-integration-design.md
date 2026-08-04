@@ -67,11 +67,18 @@ Two new flags. No existing behaviour changes.
   "generated": "2026-08-03T18:22:00+02:00",
   "threshold_pct": 5.0,
   "tickers": {
-    "CRDO": { "price": 197.88, "score": 0.72,
-      "features": { "volume_z": 1.4, "regime_er": 0.31 },
-      "levels": [ { "name": "6M", "kind": "rolling", "value": 195.50,
-                    "sigma": 8.1, "direction": "reclaim" } ] } } }
+    "CRDO": { "price": 218.35, "score": 63.1,
+      "features": { "volume_z": -1.16,
+                    "regime": { "er": 0.091, "trend_up": false, "label": "revert" } },
+      "levels": [ { "name": "6M Rolling", "kind": "rolling", "value": 178.85,
+                    "sigma": 58.89, "direction": "support" } ] } } }
 ```
+
+(Values above are taken from a real 64-ticker scan.) `score` is 0-100, not
+0-1, and is **absent** for any ticker with no level inside the scan's
+`threshold_pct` (live: 9 of 64 tickers). `features` nests `regime` as an
+object (`er`/`trend_up`/`label`) rather than a flat `regime_er` key — there
+is no top-level `regime_er`.
 
 `threshold_pct` records the proximity band the scan was built at, so tapedeck
 knows what is and is not present in the file.
@@ -90,7 +97,7 @@ This is basis-consistent. Dividend adjustment shifts historical bars, not
 today's print, so tapedeck's live TradingView-screener price compares
 correctly against a split-adjusted VWAP level.
 
-`direction` (reclaim / reject / above / below) is **not** recomputed — it is a
+`direction` (support / resistance / reclaim / reject / na) is **not** recomputed — it is a
 bar-over-bar classification the scanner derives from its own prior close, and
 tapedeck has no equivalent basis for it. It therefore ages with the feed:
 where a recomputed distance is always current, a displayed direction describes
@@ -136,8 +143,10 @@ Four surfaces, all reading one `vwaplink` payload.
    (default 2.0), not at the scan's 5% threshold: 5% across 59 names would
    drown the section. The full 5% set still populates columns and ladder.
 2. **New "VWAP" toggle**, alongside Extended and Positions. Columns: nearest
-   level name, signed %distance with heat, z-stretch, score — all sortable, so
-   the book can be ranked by setup quality. Kept out of Extended, which is
+   level name, signed %distance with heat, z-stretch, score — sortable except
+   the level-name column (real names mix numeric-prefixed rolling/anchored
+   labels with non-numeric fib ones, so a naive sort is meaningless there),
+   so the book can be ranked by setup quality. Kept out of Extended, which is
    already seven columns and would show empty cells for lists with no `vwap:`.
 3. **Levels ladder in the expanded row**, above the TradingView charts: every
    level for that ticker sorted by |distance| — name, kind, value, %distance,

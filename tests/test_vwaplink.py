@@ -5,24 +5,37 @@ import pytest
 
 from tapedeck import vwaplink
 
+# Values below are taken verbatim from a real vwap-scanner run
+# (output/vwap-latest.json, ticker CRDO) — not hand-invented — so this
+# fixture can't drift from the vocabulary the live feed actually produces
+# the way the old "direction": "above" / score: 0.72 / flat "regime_er"
+# fixture did.
 FEED = {
     "schema": 1,
     "generated": "2026-08-03T18:22:00+02:00",
     "threshold_pct": 5.0,
     "tickers": {
         "CRDO": {
-            "price": 190.00,          # scan-time price; tapedeck must ignore this
-            "score": 0.72,
-            "features": {"volume_z": 1.4, "regime_er": 0.31},
+            "price": 218.35001,       # scan-time price; tapedeck must ignore this
+            "score": 63.1,            # 0-100 scale, not 0-1
+            "features": {"volume_z": -1.16,
+                         "regime": {"er": 0.091, "trend_up": False, "label": "revert"}},
             "levels": [
-                {"name": "decade", "kind": "anchored", "value": 90.0,
-                 "sigma": None, "direction": "above"},
-                {"name": "6M", "kind": "rolling", "value": 195.50,
-                 "sigma": 8.1, "direction": "reclaim"},
+                {"name": "Decade Anchored", "kind": "anchored", "value": 94.78,
+                 "sigma": 73.74, "direction": "support"},
+                {"name": "6M Rolling", "kind": "rolling", "value": 178.85,
+                 "sigma": 58.89, "direction": "support"},
+                {"name": "Fib 0.236", "kind": "fib", "value": 78.34,
+                 "sigma": None, "direction": "support"},   # fib levels carry no sigma
             ],
         },
     },
 }
+
+# Chosen so "6M Rolling" (178.85) is nearest and inside the default 2% band,
+# while "Decade Anchored" (94.78) and "Fib 0.236" (78.34) are both far out —
+# mirrors the shape of the old synthetic fixture without inventing values.
+CRDO_PRICE = 181.0
 
 
 def _write(tmp_path, obj):
@@ -82,54 +95,60 @@ def test_unparseable_generated_degrades_to_none_age():
 # ---------- attach / recompute ----------
 
 def test_recomputes_distance_against_live_price_not_scan_price():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
     by_name = {lvl["name"]: lvl for lvl in rows[0]["vwap"]["levels"]}
-    # (197.88 - 195.50) / 195.50 * 100 == 1.217...  — NOT computed from 190.00
-    assert by_name["6M"]["pct_distance"] == pytest.approx(1.2174, abs=1e-3)
+    value = FEED["tickers"]["CRDO"]["levels"][1]["value"]  # 6M Rolling, 178.85
+    # NOT computed from the feed's scan-time price (218.35001).
+    expected = (CRDO_PRICE - value) / value * 100
+    assert by_name["6M Rolling"]["pct_distance"] == pytest.approx(expected, abs=1e-9)
 
 
 def test_levels_sorted_nearest_first():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
-    assert [lvl["name"] for lvl in rows[0]["vwap"]["levels"]] == ["6M", "decade"]
-    assert rows[0]["vwap"]["nearest"]["name"] == "6M"
+    assert [lvl["name"] for lvl in rows[0]["vwap"]["levels"]] == \
+        ["6M Rolling", "Decade Anchored", "Fib 0.236"]
+    assert rows[0]["vwap"]["nearest"]["name"] == "6M Rolling"
 
 
 def test_in_range_uses_alert_pct_not_feed_threshold():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
     by_name = {lvl["name"]: lvl for lvl in rows[0]["vwap"]["levels"]}
-    assert by_name["6M"]["in_range"] is True        # 1.22% <= 2.0%
-    assert by_name["decade"]["in_range"] is False   # 119% is in the file, not in range
+    assert by_name["6M Rolling"]["in_range"] is True         # ~1.2% <= 2.0%
+    assert by_name["Decade Anchored"]["in_range"] is False   # ~91% is in the file, not in range
     assert rows[0]["vwap"]["in_range_any"] is True
 
 
 def test_tighter_alert_pct_excludes_the_level():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 1.0)
     assert rows[0]["vwap"]["in_range_any"] is False
 
 
 def test_z_stretch_recomputed_and_none_without_sigma():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
     by_name = {lvl["name"]: lvl for lvl in rows[0]["vwap"]["levels"]}
-    assert by_name["6M"]["z_stretch"] == pytest.approx((197.88 - 195.50) / 8.1, abs=1e-4)
-    assert by_name["decade"]["z_stretch"] is None
+    value = FEED["tickers"]["CRDO"]["levels"][1]["value"]   # 6M Rolling
+    sigma = FEED["tickers"]["CRDO"]["levels"][1]["sigma"]
+    assert by_name["6M Rolling"]["z_stretch"] == pytest.approx((CRDO_PRICE - value) / sigma, abs=1e-9)
+    assert by_name["Fib 0.236"]["z_stretch"] is None  # fib levels carry no sigma in the real feed
 
 
 def test_direction_carried_verbatim():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
-    assert rows[0]["vwap"]["nearest"]["direction"] == "reclaim"
+    assert rows[0]["vwap"]["nearest"]["direction"] == "support"
 
 
 def test_score_and_features_carried():
-    rows = [{"ticker": "CRDO", "price": 197.88}]
+    rows = [{"ticker": "CRDO", "price": CRDO_PRICE}]
     vwaplink.attach_vwap(rows, FEED, 2.0)
-    assert rows[0]["vwap"]["score"] == 0.72
-    assert rows[0]["vwap"]["features"]["volume_z"] == 1.4
+    assert rows[0]["vwap"]["score"] == 63.1
+    assert rows[0]["vwap"]["features"]["volume_z"] == -1.16
+    assert rows[0]["vwap"]["features"]["regime"]["label"] == "revert"
 
 
 def test_ticker_absent_from_feed_gets_none():
@@ -148,7 +167,7 @@ def test_nonpositive_level_value_is_skipped():
     feed = {**FEED, "tickers": {"CRDO": {
         "price": 190.0, "score": None, "features": {},
         "levels": [{"name": "bad", "kind": "rolling", "value": 0,
-                    "sigma": None, "direction": "above"}]}}}
+                    "sigma": None, "direction": "na"}]}}}
     rows = [{"ticker": "CRDO", "price": 197.88}]
     vwaplink.attach_vwap(rows, feed, 2.0)
     assert rows[0]["vwap"] is None
@@ -213,7 +232,7 @@ def test_level_value_non_numeric_string_is_skipped():
     feed = {**FEED, "tickers": {"CRDO": {
         "price": 190.0, "score": 0.5, "features": {},
         "levels": [{"name": "bad", "kind": "rolling", "value": "not-a-number",
-                    "sigma": None, "direction": "above"}]}}}
+                    "sigma": None, "direction": "na"}]}}}
     vwaplink.attach_vwap(rows, feed, 2.0)
     assert rows[0]["vwap"] is None
 
@@ -268,7 +287,7 @@ def test_nan_level_value_is_excluded_and_does_not_poison_nearest(tmp_path):
         "price": 190.0, "score": 0.5, "features": {},
         "levels": [
             {"name": "poison", "kind": "rolling", "value": float("nan"),
-             "sigma": None, "direction": "above"},
+             "sigma": None, "direction": "na"},
             {"name": "6M", "kind": "rolling", "value": 195.50,
              "sigma": 8.1, "direction": "reclaim"},
         ]}}}
@@ -286,7 +305,7 @@ def test_infinite_level_value_is_excluded():
     feed = {**FEED, "tickers": {"CRDO": {
         "price": 190.0, "score": 0.5, "features": {},
         "levels": [{"name": "bad", "kind": "rolling", "value": float("inf"),
-                    "sigma": None, "direction": "above"},
+                    "sigma": None, "direction": "na"},
                    {"name": "6M", "kind": "rolling", "value": 195.50,
                     "sigma": 8.1, "direction": "reclaim"}]}}}
     vwaplink.attach_vwap(rows, feed, 2.0)
@@ -306,7 +325,7 @@ def test_bool_level_value_is_rejected():
     feed = {**FEED, "tickers": {"CRDO": {
         "price": 190.0, "score": 0.5, "features": {},
         "levels": [{"name": "bad", "kind": "rolling", "value": True,
-                    "sigma": None, "direction": "above"}]}}}
+                    "sigma": None, "direction": "na"}]}}}
     vwaplink.attach_vwap(rows, feed, 2.0)
     assert rows[0]["vwap"] is None
 
@@ -330,3 +349,19 @@ def test_freshness_future_dated_generated_clamps_age_to_zero():
     fresh = vwaplink.vwap_freshness({**FEED, "generated": "2026-08-10"}, date(2026, 8, 3))
     assert fresh["age_days"] == 0
     assert fresh["stale"] is False
+
+
+def test_zero_sigma_folds_to_none_z_stretch():
+    # round(sigma, 2) can legitimately produce 0.0 for a sub-dollar name (the
+    # scanner's own STIM/MOB range), and a zero sigma is as meaningless as a
+    # negative one for a z-stretch computation — must fold to None, not a
+    # ZeroDivisionError or an infinite z_stretch.
+    rows = [{"ticker": "CRDO", "price": 197.88}]
+    feed = {**FEED, "tickers": {"CRDO": {
+        "price": 190.0, "score": 0.5, "features": {},
+        "levels": [{"name": "6M Rolling", "kind": "rolling", "value": 195.50,
+                    "sigma": 0.0, "direction": "support"}]}}}
+    vwaplink.attach_vwap(rows, feed, 2.0)
+    lvl = rows[0]["vwap"]["nearest"]
+    assert lvl["z_stretch"] is None
+    assert lvl["sigma"] is None

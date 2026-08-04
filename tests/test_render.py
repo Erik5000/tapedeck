@@ -100,9 +100,10 @@ def test_page_rows_expand_to_tradingview_charts():
     assert "s3.tradingview.com" in html
 
 
-def wl(name, title, rows, benchmark="SPY"):
+def wl(name, title, rows, benchmark="SPY", vwap_alert_pct=2.0):
     return {"name": name, "title": title, "benchmark": benchmark,
-            "rows": rows, "summary": None, "alerts": [], "diff": None}
+            "rows": rows, "summary": None, "alerts": [], "diff": None,
+            "vwap_alert_pct": vwap_alert_pct}
 
 
 def test_render_multi_tabs_and_sections():
@@ -363,6 +364,57 @@ def test_ladder_direction_unrecognised_value_renders_empty_cell():
     ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
     assert "<td></td></tr>" in ladder
     assert "newthing" not in ladder
+
+
+def test_ladder_kind_displays_ath_atl_anchored_friendly():
+    ath = {**vwap_data()["levels"][0], "kind": "ath_anchored"}
+    html = vwap_page(vwap_data(levels=[ath], nearest=ath), second_row=False)
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert '<td class="lvl-kind">ATH-anchored</td>' in ladder
+    assert "ath_anchored" not in ladder
+
+    atl = {**vwap_data()["levels"][0], "kind": "atl_anchored"}
+    html = vwap_page(vwap_data(levels=[atl], nearest=atl), second_row=False)
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert '<td class="lvl-kind">ATL-anchored</td>' in ladder
+    assert "atl_anchored" not in ladder
+
+
+def test_ladder_kind_unrecognised_value_passes_through_not_blank():
+    # Opposite failure mode from an unmapped `direction`: an unknown future
+    # `kind` must still display verbatim, not blank the cell.
+    lvl = {**vwap_data()["levels"][0], "kind": "newkind"}
+    html = vwap_page(vwap_data(levels=[lvl], nearest=lvl), second_row=False)
+    ladder = re.search(r'<div class="vwapladder">.*?</div>', html, re.S).group(0)
+    assert '<td class="lvl-kind">newkind</td>' in ladder
+
+
+def test_vwap_dist_heat_cap_matches_list_alert_pct():
+    # heat_alpha's cap must track the list's own vwap_alert_pct (the actual
+    # in-range threshold), not a fixed constant unrelated to it.
+    data = vwap_data()
+    pct = data["levels"][0]["pct_distance"]  # 1.22
+    for alert_pct in (2.0, 4.0):
+        section = wl("a", "A", [sample_row(vwap=data)], vwap_alert_pct=alert_pct)
+        html = render.render_multi([section], TODAY)
+        expected_alpha = render.heat_alpha(pct, alert_pct)
+        assert f"rgba(56,161,105,{expected_alpha:.3f})" in html
+
+
+def test_vwap_level_column_not_sortable():
+    html = vwap_page()
+    # The column mixes numeric-prefixed ("1M Rolling") and non-numeric
+    # ("Fib 0.618") names, so a parseFloat-based sort is meaningless.
+    m = re.search(r'<th class="([^"]*)" data-key="vwap_level">', html)
+    assert m is not None
+    assert "sortable" not in m.group(1).split()
+
+
+def test_other_vwap_columns_remain_sortable():
+    html = vwap_page()
+    m = re.search(r'<th class="([^"]*)" data-key="vwap_dist">', html)
+    assert m is not None
+    assert "sortable" in m.group(1).split()
 
 
 def test_ladder_row_count_matches_level_count():
