@@ -32,7 +32,7 @@ NAME_RE = re.compile(r"[a-z0-9-]+")
 # one. Keys absent from the editor's model are simply omitted.
 _TOP_KEYS = ("title", "order", "source", "dex", "benchmark", "cockpit",
              "anti_basket", "vwap", "vwap_alert_pct")
-_HOLDING_KEYS = ("ticker", "name", "group", "equity", "shares", "cost_basis",
+_HOLDING_KEYS = ("ticker", "name", "group", "ref", "shares", "cost_basis",
                  "tv_symbol")
 
 

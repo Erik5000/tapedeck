@@ -135,6 +135,25 @@ def _td(content, col, v=None, extra_cls="", style=""):
     return f"<td{attrs}>{content}</td>"
 
 
+# Column key -> the row["borrowed"] key it reflects, where the two differ.
+_BORROW_COL = {"off_high": "pct_off_high", "d200": "sma200", "sma200": "sma200",
+               "earnings": "earnings_date", "sector": "sector"}
+
+
+def _marked_cell(row, col, ctx):
+    """The cell, plus a marker when its value came from the row's reference.
+
+    A borrowed value is true — computed entirely within the reference's own
+    series — but it describes a different instrument from the one priced in
+    the Price column, so it says so rather than blending in silently.
+    """
+    cell = _cell(row, col, ctx)
+    source = (row.get("borrowed") or {}).get(_BORROW_COL.get(col["key"], col["key"]))
+    if not source:
+        return cell
+    return cell.replace('<td class="', f'<td title="from {h.escape(str(source))}" class="lent ', 1)
+
+
 def _sma_arrow(row, window, col):
     state = (row.get("sma") or {}).get(window)
     if not state:
@@ -533,7 +552,7 @@ def _section_html(wl, today):
     body = "\n".join(
         f'<tr class="mainrow{" vwap-hit" if (r.get("vwap") or {}).get("in_range_any") else ""}" '
         f'data-ticker="{h.escape(r["ticker"])}">'
-        + "".join(_cell(r, c, ctx) for c in cols)
+        + "".join(_marked_cell(r, c, ctx) for c in cols)
         + "</tr>\n" + _detail_row(r, len(cols))
         for r in rows_sorted)
 
@@ -652,6 +671,10 @@ h1 .brand {{ font-weight:800; }}
 .chip.good {{ color:var(--up); background:rgba(var(--up-rgb),.08); }}
 .chip.bad {{ color:var(--down); background:rgba(var(--down-rgb),.08); }}
 .chip.warn {{ color:var(--warn-ink); background:rgba(var(--val-rgb),.12); }}
+/* A value taken from the row's reference instrument. Dotted underline rather
+   than a colour, so it reads as a footnote and not as another heat scale;
+   hover gives the source symbol. */
+td.lent > .num, td.lent {{ text-decoration:underline dotted var(--muted); text-underline-offset:3px; }}
 .arow {{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:3px 0; }}
 .atk {{ min-width:56px; color:var(--ink); }}
 .panel.pcol {{ display:block; }}

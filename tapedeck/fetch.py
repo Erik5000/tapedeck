@@ -36,6 +36,9 @@ def _info_one(ticker):
             "pe": info.get("trailingPE"),
             "sector": info.get("sector"),
             "exchange": info.get("exchange"),
+            # Market cap arrives in the listing's own currency — KRW for
+            # 005930.KS, JPY for 285A.T. Without this the number is unusable.
+            "currency": info.get("currency"),
             "earnings_date": None,
         }
         cal = t.calendar or {}
@@ -51,6 +54,23 @@ def fetch_info(tickers, max_workers=8):
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         results = pool.map(_info_one, tickers)
     return dict(zip(tickers, results))
+
+
+def fetch_rates(symbols):
+    """{'JPY=X': 157.78} — units per USD, for converting market caps.
+
+    A rate that doesn't come back is simply absent, and the affected market cap
+    degrades to n/a rather than being shown unconverted.
+    """
+    symbols = list(dict.fromkeys(symbols))
+    if not symbols:
+        return {}
+    rates = {}
+    for symbol, hist in fetch_history(symbols, period="5d").items():
+        close = hist["Close"].dropna()
+        if len(close):
+            rates[symbol] = float(close.iloc[-1])
+    return rates
 
 
 def fetch_universe(tickers, benchmarks, period="1y", info_tickers=None):

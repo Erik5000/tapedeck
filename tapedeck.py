@@ -89,7 +89,8 @@ def main():
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
 
     from tapedeck import alerts as alerts_mod
-    from tapedeck import config, feed, fetch, hlfetch, metrics, pipeline, render, snapshot, tvscan, vaultlink, vwaplink
+    from tapedeck import (config, feed, fetch, fx, hlfetch, metrics, pipeline, render,
+                          snapshot, tvscan, vaultlink, vwaplink)
 
     if args.new_list:
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
@@ -133,12 +134,12 @@ def main():
                 else hlfetch.qualify(wl["benchmark"], dex_of(wl)))
 
     # The screener matches bare US names: a Yahoo holding's own ticker, and for
-    # a venue holding only the equity it explicitly declares. Namespaced keys
+    # a venue holding only the reference it explicitly declares. Namespaced keys
     # drive the fetches, so one ticker can sit on two sources at once.
     all_tickers = list(dict.fromkeys(
-        (h["ticker"] if source_of(w) == "yahoo" else h.get("equity"))
+        (h["ticker"] if source_of(w) == "yahoo" else h.get("ref"))
         for w in watchlists for h in w["holdings"]
-        if source_of(w) == "yahoo" or h.get("equity")))
+        if source_of(w) == "yahoo" or h.get("ref")))
     all_keys = list(dict.fromkeys(
         h["key"] if h.get("key") else h["ticker"] for w in watchlists for h in w["holdings"]))
     today = date.today()
@@ -155,14 +156,28 @@ def main():
     hl_lists = [w for w in watchlists if source_of(w) == "hyperliquid"]
     hists, bench_closes, infos = {}, {}, {}
 
-    if yahoo_lists:
+    # Reference instruments: a Yahoo symbol per holding for the same underlying
+    # (285A.T for KIOXIA, GC=F for GOLD). They carry the fundamentals a US-only
+    # screener has nothing for, and the year-scale history a market listed six
+    # months ago cannot have. Fetched on the Yahoo side whatever the list's own
+    # source is, and only when they are not already being fetched as tickers.
+    refs = list(dict.fromkeys(
+        h["ref"] for w in watchlists for h in w["holdings"] if h.get("ref")))
+
+    if yahoo_lists or refs:
         y_tickers = list(dict.fromkeys(h["ticker"] for w in yahoo_lists for h in w["holdings"]))
         y_bench = list(dict.fromkeys(w["benchmark"] for w in yahoo_lists))
+        extra_refs = [r for r in refs if r not in set(y_tickers)]
         info_tickers = None if tv is None else [t for t in y_tickers if t not in tv]
-        print(f"TAPEDECK · fetching history: {len(y_tickers)} tickers + {'/'.join(y_bench)} "
+        if info_tickers is not None:
+            info_tickers = list(dict.fromkeys(info_tickers + extra_refs))
+        wanted = y_tickers + extra_refs
+        note = f" (+{len(extra_refs)} reference)" if extra_refs else ""
+        print(f"TAPEDECK · fetching history: {len(y_tickers)} tickers{note} + "
+              f"{'/'.join(y_bench) or 'no benchmark'} "
               f"across {len(yahoo_lists)} watchlist(s) …", file=sys.stderr)
         y_hists, y_bench_closes, y_infos = fetch.fetch_universe(
-            y_tickers, y_bench, info_tickers=info_tickers)
+            wanted, y_bench, info_tickers=info_tickers)
         hists.update(y_hists)
         bench_closes.update(y_bench_closes)
         infos.update(y_infos)
@@ -185,6 +200,20 @@ def main():
     if missing:
         print(f"warning: no price history for {', '.join(missing)} (rows degrade)", file=sys.stderr)
 
+    # A reference's market cap is quoted in its own currency — Samsung's in KRW,
+    # Kioxia's in JPY. Without a rate the cell reads n/a rather than a number
+    # that is off by three orders of magnitude.
+    rate_symbols = fx.symbols_for(
+        (infos.get(r) or {}).get("currency") for r in refs)
+    rates = {}
+    if rate_symbols:
+        print(f"TAPEDECK · fetching fx: {', '.join(rate_symbols)}", file=sys.stderr)
+        rates = fetch.fetch_rates(rate_symbols)
+        unresolved = [s for s in rate_symbols if s not in rates]
+        if unresolved:
+            print(f"warning: no fx rate for {', '.join(unresolved)} "
+                  f"— those market caps show n/a", file=sys.stderr)
+
     out_dir = ROOT / "output"
     rendered_lists = []
     for wl in watchlists:
@@ -192,7 +221,8 @@ def main():
         if bench_close is None:
             print(f"warning: no benchmark history for {wl['benchmark']} ({wl['name']}) — RS shows n/a",
                   file=sys.stderr)
-        rows, summary = pipeline.build_rows(hists, bench_close, infos, wl["holdings"], today, tv=tv)
+        rows, summary = pipeline.build_rows(hists, bench_close, infos, wl["holdings"], today,
+                                            tv=tv, rates=rates)
         vwap_feed = vwaplink.load_vwap(wl["vwap"]) if wl.get("vwap") else None
         vwaplink.attach_vwap(rows, vwap_feed, wl["vwap_alert_pct"])
         alert_list = alerts_mod.build_alerts(rows, today) + alerts_mod.build_vwap_alerts(rows)

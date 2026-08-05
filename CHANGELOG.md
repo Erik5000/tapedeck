@@ -27,9 +27,9 @@
   is in January. Before the guards, SpaceX reported "-42.2% YTD" off a series
   that began in May. Venue bars are 24/7, so weekend bars are dropped and the
   SMA windows keep their trading-day meaning.
-- **Fundamentals need an explicit `equity:`.** A venue market takes market cap,
-  P/E, sector and earnings from the TradingView screener only under the US
-  ticker it declares. Matching on the bare symbol was wrong where it mattered:
+- **Fundamentals need an explicit `ref:`.** A venue market takes market cap,
+  P/E, sector and earnings only under the instrument it declares. Matching on
+  the bare symbol was wrong where it mattered:
   the venue's `GOLD` is bullion but NYSE `GOLD` is Barrick (it picked up a $1B
   market cap), and its `CL` is WTI crude while NYSE `CL` is Colgate-Palmolive —
   which would have fired an earnings alert for a barrel of oil.
@@ -59,8 +59,27 @@
 - **Chart panels are labelled `D`, not `12H`.** TradingView has no 12-hour
   interval: it accepted `"720"` and silently drew a daily chart under a 12H
   heading.
+- **`ref:` — a second instrument per holding.** A holding can name a Yahoo
+  symbol for the same underlying (`285A.T` for KIOXIA, `GC=F` for GOLD,
+  `^GSPC` for SP500), and tapedeck fills the primary source's gaps from it:
+  market cap, P/E, P/S, sector, earnings, plus %YTD, %1Y, Δ52w-high, the 200SMA
+  and the 1Y sparkline. Kioxia's row was entirely n/a — a US-only screener has
+  nothing for a Tokyo listing — and now carries $188B, P/E 50.9 and a real
+  52-week context. 77 of the 88 venue markets have one; the rest are pre-IPO or
+  venue-only synthetics and keep their blanks.
+- **Filling is one-way and never touches the traded contract.** Price, %1D,
+  gaps, RS and the 20/50SMA always stay native, and a value the primary source
+  produced is never replaced — so a market stops borrowing on its own as it
+  accrues history. Borrowed cells are underlined, name their source on hover,
+  and are listed under `borrowed` in the JSON feed.
+- **Market caps are converted to USD.** Samsung reports ₩1,615,375B and Kioxia
+  ¥29,715B; unconverted those render as "$1615375B". Rates come from Yahoo's
+  `<CCY>=X` pairs, minor units (GBp) are normalised first, and an unavailable
+  rate yields n/a rather than a number three orders of magnitude out.
+- `equity:` is renamed `ref:` — it was never only equities — and still accepted
+  under the old name.
 - The footer no longer carries the `inspired by @speculator_io` credit.
-- 251 → 373 tests.
+- 251 → 395 tests.
 
 ## 2026-08-04 — TAPEDECK.app: a real macOS app
 

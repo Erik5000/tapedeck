@@ -166,7 +166,7 @@ def test_venue_rows_take_fundamentals_from_tradingview_but_never_prices():
     tv = {"NVDA": {"price": 999.0, "pct_1d": 42.0, "market_cap": 4.7e12,
                    "sector": "Technology", "earnings_date": "2026-08-26"}}
     holdings = [{"ticker": "NVDA", "key": "xyz:NVDA", "source": "hyperliquid",
-                 "equity": "NVDA", "name": None, "group": None, "shares": None,
+                 "ref": "NVDA", "name": None, "group": None, "shares": None,
                  "cost_basis": None, "tv_symbol": None}]
     row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
     assert row["price"] == pytest.approx(200.0)        # venue, not 999
@@ -176,7 +176,7 @@ def test_venue_rows_take_fundamentals_from_tradingview_but_never_prices():
     assert row["earnings_date"] == "2026-08-26"        # keeps earnings alerts working
 
 
-def test_venue_market_without_a_declared_equity_takes_no_fundamentals():
+def test_venue_market_without_a_declared_ref_takes_no_fundamentals():
     """The venue's GOLD is bullion; NYSE GOLD is Barrick Mining. Its CL is WTI
     crude; NYSE CL is Colgate-Palmolive. Matching on the bare symbol handed
     crude oil a market cap and an earnings date, which then fired an earnings
@@ -185,7 +185,7 @@ def test_venue_market_without_a_declared_equity_takes_no_fundamentals():
     tv = {"CL": {"market_cap": 7.2e10, "sector": "Consumer Defensive",
                  "earnings_date": "2026-08-07", "name": "Colgate-Palmolive"}}
     holdings = [{"ticker": "CL", "key": "xyz:CL", "source": "hyperliquid",
-                 "equity": None, "name": "WTI Crude", "group": "energy",
+                 "ref": None, "name": "WTI Crude", "group": "energy",
                  "shares": None, "cost_basis": None, "tv_symbol": None}]
     row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
     assert row["market_cap"] is None
@@ -195,13 +195,13 @@ def test_venue_market_without_a_declared_equity_takes_no_fundamentals():
     assert row["price"] == pytest.approx(75.0)
 
 
-def test_venue_equity_lookup_is_independent_of_the_venue_symbol():
+def test_venue_ref_lookup_is_independent_of_the_venue_symbol():
     """SKHX on the venue is SK hynix; the fundamentals key need not match."""
     hists = {"xyz:SKHX": make_hist(end=1170.0)}
     tv = {"SKHX": {"market_cap": 1.0, "sector": "WRONG"},
           "000660.KS": {"market_cap": 9.9e11, "sector": "Technology"}}
     holdings = [{"ticker": "SKHX", "key": "xyz:SKHX", "source": "hyperliquid",
-                 "equity": "000660.KS", "name": None, "group": None,
+                 "ref": "000660.KS", "name": None, "group": None,
                  "shares": None, "cost_basis": None, "tv_symbol": None}]
     row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
     assert row["market_cap"] == 9.9e11
@@ -259,7 +259,7 @@ def test_screener_cannot_replace_a_venue_rows_chart_symbol():
     hists = {"xyz:NVDA": make_hist(end=200.0)}
     tv = {"NVDA": {"tv_symbol": "NASDAQ:NVDA", "market_cap": 4.7e12}}
     holdings = [{"ticker": "NVDA", "key": "xyz:NVDA", "source": "hyperliquid",
-                 "dex": "xyz", "equity": "NVDA", "name": None, "group": None,
+                 "dex": "xyz", "ref": "NVDA", "name": None, "group": None,
                  "shares": None, "cost_basis": None, "tv_symbol": None}]
     row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
     assert row["tv_symbol"] == "HIP3XYZ:NVDAUSDC.P"
@@ -294,3 +294,101 @@ def test_every_live_venue_symbol_maps_to_a_known_tradingview_symbol():
     }
     for symbol, expected in sample.items():
         assert pipeline.tv_symbol(symbol, None, source="hyperliquid") == expected, symbol
+
+
+# ---------- reference instruments ----------
+#
+# A venue market is months old and its venue publishes no fundamentals. The
+# reference is a Yahoo instrument for the same underlying (285A.T for KIOXIA,
+# GC=F for GOLD) that fills what the primary source cannot.
+
+def venue(ticker, ref, **over):
+    base = {"ticker": ticker, "key": f"xyz:{ticker}", "source": "hyperliquid",
+            "dex": "xyz", "ref": ref, "name": None, "group": None,
+            "shares": None, "cost_basis": None, "tv_symbol": None}
+    base.update(over)
+    return base
+
+
+def test_reference_fills_fundamentals_a_us_screener_cannot_see():
+    """The TradingView screener is america-only, so it has nothing at all for
+    285A.T — which is exactly why Kioxia's row was entirely n/a."""
+    hists = {"xyz:KIOXIA": make_hist(n=90, end=345.0), "285A.T": make_hist(n=260)}
+    infos = {"285A.T": {"name": "KIOXIA HOLDINGS", "market_cap": 29_715e9,
+                        "currency": "JPY", "pe": 50.8, "sector": "Technology"}}
+    row, = pipeline.build_rows(hists, None, infos, [venue("KIOXIA", "285A.T")],
+                               TODAY, rates={"JPY=X": 158.0})[0]
+    assert row["market_cap"] == pytest.approx(29_715e9 / 158.0)
+    assert row["pe"] == 50.8
+    assert row["sector"] == "Technology"
+    assert row["borrowed"]["market_cap"] == "285A.T"
+
+
+def test_reference_fills_the_year_scale_metrics_a_young_market_cannot():
+    hists = {"xyz:GOLD": make_hist(n=90, end=4158.0), "GC=F": make_hist(n=260, end=4216.0)}
+    row, = pipeline.build_rows(hists, None, {}, [venue("GOLD", "GC=F")], TODAY)[0]
+    assert row["pct_1y"] is not None
+    assert row["pct_off_high"] is not None
+    assert row["sma"]["200"] is not None
+    assert row["borrowed"]["pct_1y"] == "GC=F"
+    assert row["borrowed"]["sma200"] == "GC=F"
+
+
+def test_native_values_are_never_replaced_by_the_reference():
+    """Only gaps are filled, so a market stops borrowing on its own once it has
+    accrued history — and the price you trade is never overwritten."""
+    hists = {"xyz:NVDA": make_hist(n=260, end=217.0), "NVDA": make_hist(n=260, end=999.0)}
+    row, = pipeline.build_rows(hists, None, {}, [venue("NVDA", "NVDA")], TODAY)[0]
+    assert row["price"] == pytest.approx(217.0)          # venue, not the reference
+    assert "pct_1y" not in row["borrowed"]               # native series was long enough
+    assert "pct_off_high" not in row["borrowed"]
+    assert "sma200" not in row["borrowed"]
+
+
+def test_price_and_short_horizon_metrics_are_never_borrowed():
+    """These describe the contract being traded. Borrowing the 20/50SMA would
+    make the arrows disagree with the user's own chart."""
+    hists = {"xyz:SMSN": make_hist(n=120, end=170.0), "005930.KS": make_hist(n=260, end=246000.0)}
+    row, = pipeline.build_rows(hists, None, {}, [venue("SMSN", "005930.KS")], TODAY)[0]
+    assert row["price"] == pytest.approx(170.0)
+    for key in ("price", "pct_1d", "gap_pct", "rs_1m", "rel_vol", "atr_pct"):
+        assert key not in row["borrowed"], key
+    assert "20" in row["sma"] and "50" in row["sma"]
+    assert row["borrowed"].get("sma20") is None
+
+
+def test_market_cap_is_dropped_when_no_rate_is_available():
+    """n/a beats a KRW figure rendered in a dollar column."""
+    hists = {"xyz:SMSN": make_hist(n=90), "005930.KS": make_hist(n=260)}
+    infos = {"005930.KS": {"market_cap": 1_615_375e9, "currency": "KRW", "pe": 12.0}}
+    row, = pipeline.build_rows(hists, None, infos, [venue("SMSN", "005930.KS")],
+                               TODAY, rates={})[0]
+    assert row["market_cap"] is None
+    assert "market_cap" not in row["borrowed"]
+    assert row["pe"] == 12.0            # ratios are currency-free, so they survive
+
+
+def test_the_1y_sparkline_comes_from_the_reference_when_the_series_is_short():
+    """The column is headed 1Y — a nine-month line under it is a quiet lie."""
+    hists = {"xyz:SMSN": make_hist(n=120), "005930.KS": make_hist(n=260)}
+    row, = pipeline.build_rows(hists, None, {}, [venue("SMSN", "005930.KS")], TODAY)[0]
+    assert row["borrowed"]["spark"] == "005930.KS"
+
+
+def test_a_market_with_no_reference_keeps_its_gaps():
+    """SPCX is pre-IPO: there is nothing public to borrow, and an empty cell
+    beats one filled from something else."""
+    hists = {"xyz:SPCX": make_hist(n=80, end=111.0)}
+    row, = pipeline.build_rows(hists, None, {}, [venue("SPCX", None)], TODAY)[0]
+    assert row["price"] == pytest.approx(111.0)
+    assert row["pct_1y"] is None and row["pct_off_high"] is None
+    assert row["market_cap"] is None
+    assert row["borrowed"] == {}
+
+
+def test_a_missing_reference_history_degrades_quietly():
+    hists = {"xyz:KIOXIA": make_hist(n=90)}
+    infos = {"285A.T": {"market_cap": 1e12, "currency": "USD"}}
+    row, = pipeline.build_rows(hists, None, infos, [venue("KIOXIA", "285A.T")], TODAY)[0]
+    assert row["market_cap"] == pytest.approx(1e12)   # info still lands
+    assert row["pct_1y"] is None                      # no history to borrow from

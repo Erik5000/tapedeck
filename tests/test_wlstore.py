@@ -94,7 +94,7 @@ def test_read_returns_the_editable_model(wl):
     assert model["title"] == "My Book"
     assert model["benchmark"] == "QQQ"
     assert model["holdings"] == [
-        {"ticker": "NVDA", "name": None, "group": "semis", "equity": None,
+        {"ticker": "NVDA", "name": None, "group": "semis", "ref": None,
          "shares": None, "cost_basis": None, "tv_symbol": None}]
 
 
@@ -115,14 +115,14 @@ def test_read_flags_a_commented_file(wl):
 def test_to_yaml_round_trips_through_the_real_loader(wl):
     model = {"title": "Venue", "source": "hyperliquid", "benchmark": "SP500",
              "vwap_alert_pct": 1.5,
-             "holdings": [{"ticker": "NVDA", "group": "semis", "equity": "NVDA"},
+             "holdings": [{"ticker": "NVDA", "group": "semis", "ref": "NVDA"},
                           {"ticker": "GOLD", "name": "Gold (troy oz)"}]}
     path = wlstore.save(wl, "venue", model)
     cfg = config.load_config(path)
     assert cfg["source"] == "hyperliquid"
     assert cfg["vwap_alert_pct"] == 1.5
     assert [h["ticker"] for h in cfg["holdings"]] == ["NVDA", "GOLD"]
-    assert cfg["holdings"][0]["equity"] == "NVDA"
+    assert cfg["holdings"][0]["ref"] == "NVDA"
 
 
 @pytest.mark.parametrize("name", [

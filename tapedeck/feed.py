@@ -14,6 +14,11 @@ def slim_rows(rows):
     for r in rows:
         slim = {k: r.get(k) for k in keep}
         slim["sma_above"] = {w: s["above"] for w, s in (r.get("sma") or {}).items()}
+        # field -> the reference symbol it was taken from. A consumer comparing
+        # rows needs to know that SMSN's market cap describes 005930.KS while
+        # its price describes the perp; absent or {} means everything is native.
+        if r.get("borrowed"):
+            slim["borrowed"] = r["borrowed"]
         if r.get("position"):
             slim["position"] = r["position"]
         out.append(slim)

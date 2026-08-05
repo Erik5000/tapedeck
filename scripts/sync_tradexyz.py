@@ -28,32 +28,36 @@ sys.path.insert(0, str(ROOT))
 
 from tapedeck import hlfetch  # noqa: E402
 
-# symbol -> (display name, group, US-listed equity or None)
+# symbol -> (display name, group, Yahoo reference symbol or None)
 #
-# The third field is what a market's fundamentals are looked up under. It is
-# set only where the venue symbol really is that US ticker. Bullion, crude, FX,
-# indices, foreign listings and pre-IPO markets get None on purpose: NYSE GOLD
-# is Barrick, not bullion, and NYSE CL is Colgate-Palmolive, not WTI crude —
-# matching on the bare symbol would give crude oil an earnings date.
+# The third field names a Yahoo-resolvable instrument for the same underlying.
+# It supplies the fundamentals a US-only screener has nothing for (285A.T for
+# KIOXIA, 005930.KS for SMSN) and the year-scale history these young markets
+# cannot have (GC=F for GOLD, ^GSPC for SP500).
+#
+# It is never the bare venue symbol by coincidence: NYSE GOLD is Barrick, not
+# bullion, and NYSE CL is Colgate-Palmolive, not WTI crude. None means nothing
+# public exists — pre-IPO, private, or a venue-only synthetic — and an empty
+# cell beats a wrong one.
 CATALOG = {
     # --- indices ---
-    "SP500": ('S&P 500', 'index', None),
+    "SP500": ('S&P 500', 'index', '^GSPC'),
     "XYZ100": ('XYZ 100 (largest non-financial US)', 'index', None),
-    "JP225": ('Japan 225', 'index', None),
-    "KR200": ('Korea 200', 'index', None),
+    "JP225": ('Japan 225', 'index', '^N225'),
+    "KR200": ('Korea 200', 'index', '^KS200'),
     # --- commodities ---
-    "GOLD": ('Gold (troy oz)', 'metals', None),
-    "SILVER": ('Silver (troy oz)', 'metals', None),
-    "PLATINUM": ('Platinum (troy oz)', 'metals', None),
-    "PALLADIUM": ('Palladium (troy oz)', 'metals', None),
-    "COPPER": ('Copper (lb)', 'metals', None),
-    "BRENTOIL": ('Brent Crude', 'energy', None),
-    "CL": ('WTI Crude', 'energy', None),
-    "NATGAS": ('Henry Hub Natural Gas', 'energy', None),
+    "GOLD": ('Gold (troy oz)', 'metals', 'GC=F'),
+    "SILVER": ('Silver (troy oz)', 'metals', 'SI=F'),
+    "PLATINUM": ('Platinum (troy oz)', 'metals', 'PL=F'),
+    "PALLADIUM": ('Palladium (troy oz)', 'metals', 'PA=F'),
+    "COPPER": ('Copper (lb)', 'metals', 'HG=F'),
+    "BRENTOIL": ('Brent Crude', 'energy', 'BZ=F'),
+    "CL": ('WTI Crude', 'energy', 'CL=F'),
+    "NATGAS": ('Henry Hub Natural Gas', 'energy', 'NG=F'),
     # --- fx ---
-    "EUR": ('EUR/USD', 'fx', None),
-    "GBP": ('GBP/USD', 'fx', None),
-    "JPY": ('USD/JPY', 'fx', None),
+    "EUR": ('EUR/USD', 'fx', 'EURUSD=X'),
+    "GBP": ('GBP/USD', 'fx', 'GBPUSD=X'),
+    "JPY": ('USD/JPY', 'fx', 'JPY=X'),
     # --- etfs ---
     "SMH": ('VanEck Semiconductor ETF', 'etf', 'SMH'),
     "XLE": ('Energy Select Sector SPDR', 'etf', 'XLE'),
@@ -67,12 +71,12 @@ CATALOG = {
     "MU": ('Micron Technology', 'memory', 'MU'),
     "SNDK": ('Sandisk', 'memory', 'SNDK'),
     "WDC": ('Western Digital', 'memory', 'WDC'),
-    "SKHX": ('SK hynix (KRX)', 'memory', None),
-    "SKHY": ('SK Hynix ADS (pre-IPO)', 'memory', None),
-    "KIOXIA": ('Kioxia Holdings', 'memory', None),
+    "SKHX": ('SK hynix (KRX)', 'memory', '000660.KS'),
+    "SKHY": ('SK Hynix ADS (pre-IPO)', 'memory', '000660.KS'),
+    "KIOXIA": ('Kioxia Holdings', 'memory', '285A.T'),
     "CXMT": ('ChangXin Technology (pre-IPO)', 'memory', None),
-    "SMSN": ('Samsung Electronics', 'memory', None),
-    "GIGADEV": ('GigaDevice Semiconductor', 'memory', None),
+    "SMSN": ('Samsung Electronics', 'memory', '005930.KS'),
+    "GIGADEV": ('GigaDevice Semiconductor', 'memory', '603986.SS'),
     # --- semis ---
     "NVDA": ('NVIDIA', 'semis', 'NVDA'),
     "AMD": ('Advanced Micro Devices', 'semis', 'AMD'),
@@ -132,8 +136,8 @@ CATALOG = {
     "HIMS": ('Hims & Hers Health', 'other', 'HIMS'),
     "RIVN": ('Rivian Automotive', 'other', 'RIVN'),
     "ZM": ('Zoom Communications', 'other', 'ZM'),
-    "SOFTBANK": ('SoftBank Group', 'other', None),
-    "HYUNDAI": ('Hyundai Motor', 'other', None),
+    "SOFTBANK": ('SoftBank Group', 'other', '9984.T'),
+    "HYUNDAI": ('Hyundai Motor', 'other', '005380.KS'),
 }
 
 GROUP_ORDER = ("index", "metals", "energy", "fx", "etf", "memory", "semis",
@@ -147,12 +151,19 @@ HEADER = """\
 # positions in a separate list instead.
 #
 # Prices come from the venue itself (source: hyperliquid), not Yahoo, so the
-# numbers match what you actually trade. Two consequences worth knowing:
-#   * these markets listed between late 2025 and mid 2026, so 52w high/low,
-#     %YTD, %1Y and the 200SMA read n/a until enough history accrues
-#   * the venue publishes no fundamentals -- market cap, P/E, P/S, sector and
-#     earnings come from the TradingView screener where a symbol is also a US
-#     ticker, and are blank otherwise
+# numbers match what you actually trade, and charts show the perp
+# (HIP3XYZ:<SYMBOL>USDC.P, derived automatically).
+#
+# `ref:` names a Yahoo instrument for the same underlying. It fills what the
+# venue cannot: the fundamentals a US-only screener has nothing for (285A.T for
+# KIOXIA, 005930.KS for SMSN) and the year-scale metrics -- %YTD, %1Y, delta to
+# the 52w high, 200SMA -- that a market listed six months ago has no history
+# for. Those cells are marked "from <ref>" on hover, and stop being borrowed
+# once the venue has enough bars of its own. Price, %1D, gaps, RS and the
+# 20/50SMA always stay native to the contract.
+#
+# Markets with no ref have no public equivalent at all (pre-IPO, private, or a
+# venue-only synthetic); their fundamentals stay blank rather than wrong.
 title: trade.xyz Universe
 order: 0.6              # just after the trade.xyz Book
 source: hyperliquid
@@ -184,7 +195,7 @@ def build_yaml(markets):
                 fields.append(f"name: {name + ',':<{name_width}}")
             fields.append(f"group: {group}")
             if equity:
-                fields.append(f", equity: {equity}")
+                fields.append(f", ref: {equity}")
             out.append("  - {" + "".join(fields) + "}\n")
         out.append("\n")
     return "".join(out).rstrip("\n") + "\n", unknown

@@ -36,6 +36,17 @@ holdings:
 """
 
 
+def _ref_of(entry):
+    """The holding's reference symbol. Yahoo symbols are case-sensitive in
+    their suffixes (285A.T, ^GSPC, GC=F, EURUSD=X), so this only strips —
+    unlike `ticker`, which is uppercased."""
+    value = entry.get("ref")
+    if value is None:
+        value = entry.get("equity")      # the field's former name
+    value = str(value).strip() if value is not None else ""
+    return value or None
+
+
 def load_config(path):
     raw = yaml.safe_load(Path(path).read_text()) or {}
     source = str(raw.get("source") or DEFAULT_SOURCE).strip().lower()
@@ -61,12 +72,15 @@ def load_config(path):
             "key": ticker if source == "yahoo" else hlfetch.qualify(ticker, dex),
             "source": source,
             "dex": dex,
-            # The US-listed equity a venue market tracks, if any. Fundamentals
-            # are looked up under this and nowhere else: venue GOLD is bullion
-            # while NYSE GOLD is Barrick, and venue CL is WTI crude while NYSE
-            # CL is Colgate-Palmolive. Matching on the bare symbol would hand
-            # crude oil Colgate's earnings date.
-            "equity": str(entry["equity"]).upper() if entry.get("equity") else None,
+            # A Yahoo-resolvable symbol for the same underlying: 285A.T for
+            # KIOXIA, GC=F for GOLD, ^GSPC for SP500. It supplies fundamentals
+            # and the year-scale metrics the primary source can't support, and
+            # is looked up under this key and nowhere else — the venue's GOLD
+            # is bullion while NYSE GOLD is Barrick, and its CL is WTI crude
+            # while NYSE CL is Colgate-Palmolive, so matching on the bare
+            # symbol would hand crude oil an earnings date.
+            # `equity:` is the older name for the same field.
+            "ref": _ref_of(entry),
             "name": entry.get("name"),
             "group": entry.get("group"),
             "shares": float(entry["shares"]) if entry.get("shares") is not None else None,

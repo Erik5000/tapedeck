@@ -82,6 +82,8 @@ holdings:
     shares: 10         # optional → position columns + summary tiles
     cost_basis: 118.5  # optional → open P&L
     tv_symbol: NASDAQ:NVDA  # optional TradingView override for the chart panel
+    ref: 285A.T        # optional second instrument for the same underlying —
+                       # fills fundamentals and year-scale metrics (see below)
 ```
 
 All lists on a source are fetched in ONE batch (union of tickers), so more lists
@@ -99,22 +101,51 @@ on HyperCore — so a list of perps shows the marks you actually trade rather th
 a spot proxy. Holdings use the venue's own symbols (`GOLD`, `COPPER`, `SKHX`,
 `SPCX`), and `dex: xyz` is the default namespace.
 
-Two honest limitations, both visible on the page as `n/a` rather than papered
-over:
-
-- **The markets are young** (listed between late 2025 and mid 2026), so 52w
-  high/low, %YTD, %1Y and the 200SMA stay blank until enough history accrues.
-  Bars are 24/7 and weekend bars are dropped, so the SMA windows keep their
-  trading-day meaning.
-- **The venue publishes no fundamentals.** Market cap, P/E, P/S, sector and
-  earnings come from the TradingView screener, and only under an explicit
-  `equity:` on the holding — the venue's `GOLD` is bullion while NYSE `GOLD` is
-  Barrick, and its `CL` is WTI crude while NYSE `CL` is Colgate-Palmolive, so
-  matching on the bare symbol would be wrong in a way that fires real alerts.
+The venue has two gaps — it is months old, and it publishes no fundamentals at
+all. Bars are also 24/7, so weekend bars are dropped and the SMA windows keep
+their trading-day meaning.
 
 Charts show the perp itself: trade.xyz lists its markets on TradingView as
 `HIP3XYZ:<SYMBOL>USDC.P`, and tapedeck derives that automatically, so no
 `tv_symbol:` is needed and no delayed equity proxy stands in for the contract.
+
+### Reference instruments — `ref:`
+
+A holding can name a second instrument for the same underlying, and tapedeck
+fills the primary source's gaps from it:
+
+```yaml
+- {ticker: KIOXIA, name: Kioxia Holdings, ref: 285A.T}     # Tokyo listing
+- {ticker: GOLD,   name: Gold (troy oz),  ref: GC=F}       # front-month future
+- {ticker: SP500,  name: S&P 500,         ref: ^GSPC}
+```
+
+Any Yahoo symbol works, which is the point: a US-only screener has nothing for
+`285A.T` or `005930.KS`, and Yahoo has both.
+
+**Filled from the reference:** market cap, P/E, P/S, sector, earnings, and the
+year-scale metrics a young series can't support — %YTD, %1Y, Δ52w-high, the
+200SMA and the 1Y sparkline. Each is computed entirely within the reference's
+own series, so a borrowed "12% off the 52-week high" is a true statement about
+the reference and never a comparison across two price scales.
+
+**Never borrowed:** price, %1D, gaps, RS and the 20/50SMA. Those describe the
+contract you actually trade, and the venue has enough bars for them — borrowing
+them would make the SMA arrows disagree with your own chart.
+
+Borrowed cells are underlined and name their source on hover, and appear as
+`borrowed` in `output/tapedeck-latest.json`. Filling is one-way: a value the
+primary source produced is never replaced, so a market stops borrowing on its
+own once it has accrued history.
+
+Market caps are converted to USD (Samsung reports ₩1,615,375B, Kioxia
+¥29,715B). If a rate is unavailable the cell reads n/a rather than a number
+three orders of magnitude out; P/E and P/S are ratios and need no conversion.
+
+A market with no public equivalent — pre-IPO, private, or a venue-only
+synthetic like `SPCX`, `CXMT` or `XYZ100` — has no `ref:` and keeps its blanks.
+`ref:` is never the bare venue symbol by coincidence: NYSE `GOLD` is Barrick,
+not bullion, and NYSE `CL` is Colgate-Palmolive, not WTI crude.
 
 `scripts/sync_tradexyz.py --write` regenerates a watchlist of every live market
 from the venue's API, and reports what has been listed or delisted since.

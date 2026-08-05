@@ -264,25 +264,48 @@ def test_scaffold_template_still_loads(tmp_path):
     assert cfg["source"] == "yahoo"
 
 
-def test_equity_defaults_to_none_and_uppercases(tmp_path):
+def test_ref_defaults_to_none_and_preserves_case(tmp_path):
+    """Yahoo symbols are case-sensitive in their suffixes — 285A.T, ^GSPC,
+    GC=F, EURUSD=X — so ref must not be uppercased the way ticker is."""
     cfg = write(tmp_path, "source: hyperliquid\nholdings:\n"
                           "  - ticker: GOLD\n"
-                          "  - {ticker: SKHX, equity: 000660.ks}\n")
+                          "  - {ticker: SKHX, ref: 000660.KS}\n"
+                          "  - {ticker: KIOXIA, ref: 285A.T}\n"
+                          "  - {ticker: EUR, ref: EURUSD=X}\n")
     holdings = {h["ticker"]: h for h in cfg["holdings"]}
-    assert holdings["GOLD"]["equity"] is None      # bullion, not Barrick
-    assert holdings["SKHX"]["equity"] == "000660.KS"
+    assert holdings["GOLD"]["ref"] is None      # no public equivalent declared
+    assert holdings["SKHX"]["ref"] == "000660.KS"
+    assert holdings["KIOXIA"]["ref"] == "285A.T"
+    assert holdings["EUR"]["ref"] == "EURUSD=X"
 
 
-def test_generated_tradexyz_universe_declares_equity_only_where_it_applies(tmp_path):
-    """Guards the catalog in scripts/sync_tradexyz.py: a commodity or FX market
-    that picks up an `equity:` would import an unrelated company's fundamentals."""
+def test_equity_is_accepted_as_the_former_name_for_ref(tmp_path):
+    cfg = write(tmp_path, "source: hyperliquid\nholdings:\n"
+                          "  - {ticker: NVDA, equity: NVDA}\n")
+    assert cfg["holdings"][0]["ref"] == "NVDA"
+
+
+def test_generated_tradexyz_universe_never_references_the_bare_venue_symbol(tmp_path):
+    """Guards the catalog in scripts/sync_tradexyz.py. A commodity, FX or index
+    market whose ref were its own symbol would import an unrelated company's
+    fundamentals — NYSE GOLD is Barrick, NYSE CL is Colgate-Palmolive."""
     path = ROOT / "watchlists" / "tradexyz-universe.yaml"
     if not path.exists():
         pytest.skip("universe watchlist not generated in this checkout")
     holdings = {h["ticker"]: h for h in config.load_config(path)["holdings"]}
-    for symbol in ("GOLD", "SILVER", "COPPER", "CL", "BRENTOIL", "NATGAS",
-                   "EUR", "GBP", "JPY", "SP500", "XYZ100", "JP225", "KR200",
-                   "SPCX", "CXMT", "ZHIPU", "SKHX", "SMSN"):
-        assert holdings[symbol]["equity"] is None, symbol
+    expected = {"GOLD": "GC=F", "SILVER": "SI=F", "COPPER": "HG=F", "CL": "CL=F",
+                "BRENTOIL": "BZ=F", "NATGAS": "NG=F", "EUR": "EURUSD=X",
+                "GBP": "GBPUSD=X", "JPY": "JPY=X", "SP500": "^GSPC",
+                "JP225": "^N225", "KR200": "^KS200", "SKHX": "000660.KS",
+                "SMSN": "005930.KS", "KIOXIA": "285A.T", "SOFTBANK": "9984.T",
+                "HYUNDAI": "005380.KS", "GIGADEV": "603986.SS"}
+    for symbol, ref in expected.items():
+        assert holdings[symbol]["ref"] == ref, symbol
+    # No public equivalent exists for these, so they stay unmapped rather than
+    # borrowing a subtly different series.
+    for symbol in ("SPCX", "CXMT", "ZHIPU", "MINIMAX", "CBRS", "QNT",
+                   "BIRD", "BOT", "SHAZ", "PURRDAT", "XYZ100"):
+        assert holdings[symbol]["ref"] is None, symbol
     for symbol in ("NVDA", "MU", "AAPL", "SMH"):
-        assert holdings[symbol]["equity"] == symbol, symbol
+        assert holdings[symbol]["ref"] == symbol, symbol
+

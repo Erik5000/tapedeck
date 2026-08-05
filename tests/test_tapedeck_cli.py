@@ -47,7 +47,7 @@ def _stub_no_network(monkeypatch, price=101.0):
 
     monkeypatch.setattr(fetch_mod, "fetch_universe", lambda *a, **k: ({}, {}, {}))
 
-    def fake_build_rows(hists, bench_close, infos, holdings, today, tv=None):
+    def fake_build_rows(hists, bench_close, infos, holdings, today, tv=None, rates=None):
         rows = []
         for h in holdings:
             row = pipeline_mod._empty_row(h, infos.get(h["ticker"]) or {})

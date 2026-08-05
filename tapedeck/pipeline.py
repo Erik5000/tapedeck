@@ -1,6 +1,6 @@
 """Assemble render-ready row dicts from fetched data. Pure given inputs."""
 
-from . import metrics
+from . import fx, metrics
 
 SMA_WINDOWS = (20, 50, 200)
 
@@ -58,6 +58,8 @@ def _empty_row(holding, info):
         "sma": {}, "sma_cross": {}, "gap_pct": None,
         "rel_vol": None, "atr_pct": None,
         "position": None,
+        # field -> the reference symbol it came from, for the cell's marker.
+        "borrowed": {},
     }
 
 
@@ -71,7 +73,76 @@ _TV_FUNDAMENTAL_KEYS = ("name", "sector", "market_cap", "pe", "ps", "earnings_da
 _TV_OVERRIDE_KEYS = _TV_PRICE_KEYS + _TV_FUNDAMENTAL_KEYS + ("tv_symbol",)
 
 
-def build_rows(hists, bench_close, infos, holdings, today, tv=None):
+# Year-scale context a young series cannot support. When the primary source
+# leaves these empty and the holding names a reference, they are computed from
+# the reference's own history instead — entirely within that series, so a
+# borrowed "12% off the 52-week high" is a true statement about the reference
+# and never a comparison across two price scales.
+#
+# Deliberately NOT borrowed: price, %1D, gaps, RS and the 20/50SMA. A venue
+# market has enough bars for those, and they describe the contract actually
+# being traded. Borrowing them would make the SMA arrows disagree with the
+# user's own chart.
+_REF_METRIC_KEYS = ("pct_ytd", "pct_1y", "pct_off_high", "new_52w")
+_REF_FUNDAMENTAL_KEYS = ("name", "sector", "market_cap", "pe", "ps", "earnings_date")
+
+
+def _fill_from_ref(row, ref_hist, ref_info, ref_symbol, rates):
+    """Fill the gaps a young primary series leaves, from the reference.
+
+    Only ever fills — a value the primary produced is never replaced, so a
+    market stops borrowing on its own once it has accrued enough history.
+    """
+    borrowed = row.setdefault("borrowed", {})
+
+    for key in _REF_FUNDAMENTAL_KEYS:
+        if row.get(key) is not None or ref_info.get(key) is None:
+            continue
+        value = ref_info[key]
+        if key == "market_cap":
+            value = fx.to_usd(value, ref_info.get("currency"), rates)
+            if value is None:
+                continue          # no rate: n/a beats a number in the wrong currency
+        row[key] = value
+        borrowed[key] = ref_symbol
+
+    if ref_hist is None or not len(ref_hist):
+        return
+    close, high, low = ref_hist["Close"], ref_hist["High"], ref_hist["Low"]
+    candidates = {
+        "pct_ytd": lambda: metrics.pct_ytd(close),
+        "pct_1y": lambda: metrics.pct_1y(close),
+        "pct_off_high": lambda: metrics.pct_off_52w_high(close, high),
+        "new_52w": lambda: metrics.new_52w_extreme(high, low),
+    }
+    for key in _REF_METRIC_KEYS:
+        if row.get(key):          # spark is [] when absent, the rest are None
+            continue
+        value = candidates[key]()
+        if value is None or value == []:
+            continue
+        row[key] = value
+        borrowed[key] = ref_symbol
+
+    # The column is headed "1Y", so a nine-month line drawn under it is the same
+    # quiet mislabel the metric guards exist to prevent. pct_1y being borrowed
+    # is exactly the signal that the native series is too short to be one.
+    if "pct_1y" in borrowed:
+        spark = metrics.sparkline(close)
+        if spark:
+            row["spark"] = spark
+            borrowed["spark"] = ref_symbol
+
+    # The 200SMA is the one window a venue series routinely cannot reach.
+    if "200" not in row["sma"]:
+        state = metrics.sma_state(close, 200)
+        if state:
+            row["sma"]["200"] = state
+            borrowed["sma200"] = ref_symbol
+
+
+def build_rows(hists, bench_close, infos, holdings, today, tv=None, rates=None):
+    rates = rates or {}
     rows = []
     for holding in holdings:
         ticker = holding["ticker"]
@@ -112,14 +183,22 @@ def build_rows(hists, bench_close, infos, holdings, today, tv=None):
         # the equity it explicitly declares. Its prices are 24/7 perp marks —
         # overwriting them with a spot close would put two different instruments
         # in one row — and its symbol is the venue's, not a US ticker.
+        ref_symbol = holding.get("ref")
         if holding.get("source", "yahoo") == "yahoo":
             tv_keys, tv_lookup = _TV_OVERRIDE_KEYS, ticker
         else:
-            tv_keys, tv_lookup = _TV_FUNDAMENTAL_KEYS, holding.get("equity")
+            tv_keys, tv_lookup = _TV_FUNDAMENTAL_KEYS, ref_symbol
         tv_data = ((tv or {}).get(tv_lookup) or {}) if tv_lookup else {}
         for tv_key in tv_keys:
             if tv_data.get(tv_key) is not None:
                 row[tv_key] = tv_data[tv_key]
+
+        # The screener is US-only, so it has nothing for 285A.T or 005930.KS.
+        # Yahoo does, and it also carries the year-scale history the venue's
+        # young series can't provide.
+        if ref_symbol and ref_symbol != key:
+            _fill_from_ref(row, hists.get(ref_symbol), infos.get(ref_symbol) or {},
+                           ref_symbol, rates)
         if holding.get("name"):
             row["name"] = holding["name"]
         if holding.get("tv_symbol"):

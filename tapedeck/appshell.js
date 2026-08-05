@@ -188,7 +188,7 @@
     {key: 'ticker', label: 'Ticker', size: 9},
     {key: 'name', label: 'Name', size: 18},
     {key: 'group', label: 'Group', size: 12},
-    {key: 'equity', label: 'Equity', size: 9},
+    {key: 'ref', label: 'Ref', size: 11},
     {key: 'shares', label: 'Shares', size: 7},
     {key: 'cost_basis', label: 'Cost', size: 7},
     {key: 'tv_symbol', label: 'TV symbol', size: 12}
