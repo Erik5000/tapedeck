@@ -195,3 +195,115 @@ def test_vwap_missing_levels_key_produces_nothing_no_error():
 def test_vwap_not_a_dict_produces_nothing_no_error():
     rows = [{"ticker": "RIOT", "vwap": "garbage"}]
     assert alerts.build_vwap_alerts(rows) == []
+
+
+# ---------- short labels ----------
+#
+# `short` is what the grouped panel prints; `text` stays the authoritative
+# wording (the feed and the chip tooltip use it), so both are pinned.
+
+def test_sma_alerts_carry_a_short_label_without_the_direction_word():
+    """The chip sits under a ▲/▼ that already says reclaimed vs lost."""
+    out = alerts.build_alerts([row(ticker="CRDO", sma_cross={"20": "reclaimed"})], TODAY)
+    assert out[0]["text"] == "reclaimed 20SMA"
+    assert out[0]["short"] == "20SMA"
+
+    out = alerts.build_alerts([row(ticker="DRS", sma_cross={"50": "lost"})], TODAY)
+    assert out[0]["text"] == "lost 50SMA"
+    assert out[0]["short"] == "50SMA"
+
+
+def test_gap_and_earnings_short_labels():
+    out = alerts.build_alerts([row(ticker="FN", gap_pct=15.1)], TODAY)
+    assert out[0]["short"] == "gap +15.1%"
+    out = alerts.build_alerts([row(ticker="RKT", earnings_date="2026-08-02")], TODAY)
+    assert out[0]["short"] == "earnings 2d"
+
+
+def test_every_alert_has_a_short_label():
+    """A missing `short` would silently fall back to the long text in one chip
+    and look like a rendering bug, so no rule may omit it."""
+    out = alerts.build_alerts([row(ticker="ALL", new_52w="high", gap_pct=-9.0,
+                                   sma_cross={"20": "reclaimed", "200": "lost"},
+                                   earnings_date="2026-08-01")], TODAY)
+    assert len(out) == 5
+    assert all(a.get("short") for a in out)
+
+
+def vwap_row(name, direction, pct_distance, kind="anchored", ticker="TST"):
+    return _row(ticker, [{"name": name, "kind": kind, "pct_distance": pct_distance,
+                          "in_range": True, "direction": direction}])
+
+
+def test_vwap_short_label_abbreviates_the_level_and_drops_the_phrase():
+    out = alerts.build_vwap_alerts([vwap_row(name="ATH Anchored", direction="resistance",
+                                             pct_distance=0.24)])
+    assert out[0]["text"] == "0.2% above ATH Anchored VWAP · acting as resistance"
+    assert out[0]["short"] == "0.2% ATH-Anch"
+
+
+def test_vwap_short_label_covers_rolling_and_named_anchors():
+    cases = {"6M Rolling": "6M-Roll", "12M Rolling": "12M-Roll",
+             "Quarterly Anchored": "Q-Anch", "Yearly Anchored": "Y-Anch",
+             "Decade Anchored": "10Y-Anch", "ATL Anchored": "ATL-Anch"}
+    for name, expected in cases.items():
+        out = alerts.build_vwap_alerts([vwap_row(name=name, direction="support",
+                                                 pct_distance=-1.5)])
+        assert out[0]["short"] == f"1.5% {expected}", name
+
+
+def test_vwap_short_label_passes_fib_names_through():
+    """A fib projection has no long form to abbreviate — and never gains a
+    trailing 'VWAP', in the short label either."""
+    out = alerts.build_vwap_alerts([vwap_row(name="Fib 0.5", kind="fib",
+                                             direction="support", pct_distance=-0.3)])
+    assert out[0]["short"] == "0.3% Fib 0.5"
+    assert "VWAP" not in out[0]["short"]
+
+
+# ---------- grouping ----------
+
+def alert(ticker, severity="good", kind="sma_reclaimed", text="reclaimed 20SMA"):
+    return {"ticker": ticker, "kind": kind, "text": text, "short": text, "severity": severity}
+
+
+def test_group_alerts_collapses_one_row_per_ticker():
+    out = alerts.group_alerts([alert("CRDO"), alert("FN"), alert("CRDO", severity="bad")])
+    assert [g["ticker"] for g in out] == ["CRDO", "FN"]
+    assert len(out[0]["alerts"]) == 2
+    assert out[0]["counts"] == {"bad": 1, "warn": 0, "good": 1}
+
+
+def test_group_alerts_ranks_busiest_ticker_first():
+    out = alerts.group_alerts([alert("A"), alert("B"), alert("B"), alert("B"),
+                               alert("C"), alert("C")])
+    assert [g["ticker"] for g in out] == ["B", "C", "A"]
+
+
+def test_group_alerts_breaks_count_ties_on_bad_severity():
+    """Two names with the same amount going on: the one going down ranks first."""
+    out = alerts.group_alerts([alert("QUIET"), alert("QUIET"),
+                               alert("FALLING", severity="bad"), alert("FALLING", severity="bad")])
+    assert [g["ticker"] for g in out] == ["FALLING", "QUIET"]
+
+
+def test_group_alerts_is_stable_on_a_full_tie():
+    """Equal count and equal severity mix must fall back to input order, or an
+    unchanged watchlist would reshuffle its Alerts panel run to run."""
+    given = [alert(t) for t in ("D", "C", "B", "A")]
+    assert [g["ticker"] for g in alerts.group_alerts(given)] == ["D", "C", "B", "A"]
+    assert [g["ticker"] for g in alerts.group_alerts(given)] == ["D", "C", "B", "A"]
+
+
+def test_group_alerts_reunites_a_tickers_vwap_alert_with_its_others():
+    """The whole point: build_vwap_alerts is concatenated as a trailing block,
+    so ungrouped a name's VWAP chip lands dozens of chips from its SMA ones."""
+    flat = ([alert("CRDO"), alert("CIEN")] * 3) + [alert("CRDO", kind="vwap", text="0.2% ATH-Anch")]
+    out = alerts.group_alerts(flat)
+    crdo = next(g for g in out if g["ticker"] == "CRDO")
+    assert [a["kind"] for a in crdo["alerts"]].count("vwap") == 1
+    assert len(crdo["alerts"]) == 4
+
+
+def test_group_alerts_empty():
+    assert alerts.group_alerts([]) == []
