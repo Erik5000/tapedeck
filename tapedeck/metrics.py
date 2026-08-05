@@ -5,6 +5,13 @@ import statistics
 import pandas as pd
 
 
+# A year of trading days, minus slack for holidays and the odd missing bar.
+# Below this, a "52-week" figure is a claim the data cannot support — the
+# trade.xyz markets carry as few as 80 bars, and an 80-bar maximum is not a
+# 52-week high. These metrics return None instead, and the page shows n/a.
+MIN_52W_BARS = 240
+
+
 def _clean(series):
     if series is None:
         return None
@@ -22,18 +29,30 @@ def pct_1d(close):
 
 
 def pct_ytd(close):
+    """Change since the prior year's last close.
+
+    Without a prior-year bar the first bar of the series stands in, but only if
+    it falls in January — for a market that started trading in May, "since the
+    first bar" is not year-to-date and saying so would overstate the move by
+    however much the year had already done.
+    """
     s = _clean(close)
     if s is None or len(s) < 2:
         return None
     year = s.index[-1].year
     prior = s[s.index.year < year]
-    base = prior.iloc[-1] if len(prior) else s.iloc[0]
+    if len(prior):
+        base = prior.iloc[-1]
+    elif s.index[0].month == 1:
+        base = s.iloc[0]
+    else:
+        return None
     return float((s.iloc[-1] / base - 1) * 100)
 
 
 def pct_1y(close):
     s = _clean(close)
-    if s is None or len(s) < 2:
+    if s is None or len(s) < MIN_52W_BARS:
         return None
     return float((s.iloc[-1] / s.iloc[0] - 1) * 100)
 
@@ -66,14 +85,14 @@ def sma_cross(close, window):
 
 def pct_off_52w_high(close, high):
     c, h = _clean(close), _clean(high)
-    if c is None or h is None:
+    if c is None or h is None or len(h) < MIN_52W_BARS:
         return None
     return float((c.iloc[-1] / h.max() - 1) * 100)
 
 
 def new_52w_extreme(high, low):
     h, l = _clean(high), _clean(low)
-    if h is None or l is None or len(h) < 2 or len(l) < 2:
+    if h is None or l is None or min(len(h), len(l)) < MIN_52W_BARS:
         return None
     if h.iloc[-1] >= h.iloc[:-1].max():
         return "high"

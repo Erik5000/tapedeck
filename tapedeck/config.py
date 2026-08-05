@@ -6,10 +6,20 @@ from pathlib import Path
 
 import yaml
 
+from . import hlfetch
+
+# Where a list's prices come from. "yahoo" is the default and covers every
+# list that existed before trade.xyz support; "hyperliquid" reads XYZ markets
+# on HyperCore, which carry short 24/7 history and no fundamentals.
+SOURCES = ("yahoo", "hyperliquid")
+DEFAULT_SOURCE = "yahoo"
+
 _TEMPLATE = """\
 title: {title}
 # order: 3              # optional tab position (lists without order go last)
 benchmark: SPY
+# source: hyperliquid   # optional: prices from trade.xyz instead of Yahoo
+#                       # (short history, no fundamentals; benchmark defaults to SP500)
 # cockpit: /path/to/COCKPIT.md   # optional: render a read-only status panel parsed from this markdown file
 # anti_basket: other-list        # optional: aggregate that watchlist as an "anti-basket" row in the basket table
 # vwap: /path/to/vwap-latest.json  # optional: VWAP levels from a vwap-scanner --json-out feed
@@ -28,6 +38,10 @@ holdings:
 
 def load_config(path):
     raw = yaml.safe_load(Path(path).read_text()) or {}
+    source = str(raw.get("source") or DEFAULT_SOURCE).strip().lower()
+    if source not in SOURCES:
+        raise ValueError(f"unknown source {source!r} — expected one of {', '.join(sorted(SOURCES))}")
+    dex = str(raw.get("dex") or hlfetch.DEFAULT_DEX).strip()
     holdings_raw = raw.get("holdings") or []
     if not holdings_raw:
         raise ValueError("portfolio config needs at least one entry under 'holdings'")
@@ -42,6 +56,16 @@ def load_config(path):
         seen.add(ticker)
         holdings.append({
             "ticker": ticker,
+            # The fetch key namespaces the source, so NVDA can be a Yahoo row
+            # in one list and a trade.xyz perp in another within the same run.
+            "key": ticker if source == "yahoo" else hlfetch.qualify(ticker, dex),
+            "source": source,
+            # The US-listed equity a venue market tracks, if any. Fundamentals
+            # are looked up under this and nowhere else: venue GOLD is bullion
+            # while NYSE GOLD is Barrick, and venue CL is WTI crude while NYSE
+            # CL is Colgate-Palmolive. Matching on the bare symbol would hand
+            # crude oil Colgate's earnings date.
+            "equity": str(entry["equity"]).upper() if entry.get("equity") else None,
             "name": entry.get("name"),
             "group": entry.get("group"),
             "shares": float(entry["shares"]) if entry.get("shares") is not None else None,
@@ -52,7 +76,9 @@ def load_config(path):
     vwap_alert_pct = 2.0 if vwap_alert_pct is None else float(vwap_alert_pct)
     if vwap_alert_pct < 0:
         raise ValueError(f"vwap_alert_pct must be >= 0, got {vwap_alert_pct!r}")
-    return {"benchmark": str(raw.get("benchmark") or "SPY").upper(),
+    default_bench = "SPY" if source == "yahoo" else "SP500"
+    return {"benchmark": str(raw.get("benchmark") or default_bench).upper(),
+            "source": source, "dex": dex,
             "title": raw.get("title"), "order": raw.get("order"), "holdings": holdings,
             "cockpit": str(raw["cockpit"]) if raw.get("cockpit") else None,
             "anti_basket": str(raw["anti_basket"]).strip() if raw.get("anti_basket") else None,
@@ -69,6 +95,7 @@ def load_watchlists(directory):
         cfg = load_config(path)
         title = cfg["title"] or path.stem.replace("-", " ").replace("_", " ").title()
         watchlists.append({"name": path.stem, "title": title, "order": cfg["order"],
+                           "source": cfg["source"], "dex": cfg["dex"],
                            "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
                            "cockpit": cfg["cockpit"], "anti_basket": cfg["anti_basket"],
                            "vwap": cfg["vwap"], "vwap_alert_pct": cfg["vwap_alert_pct"]})

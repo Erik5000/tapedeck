@@ -32,7 +32,7 @@ def test_pct_ytd_without_prior_year_uses_first_close():
 
 
 def test_pct_1y_first_to_last():
-    assert metrics.pct_1y(bseries([80, 90, 100])) == pytest.approx(25.0)
+    assert metrics.pct_1y(bseries([80.0] + [90.0] * 248 + [100.0])) == pytest.approx(25.0)
 
 
 # --- SMA state and crosses ---
@@ -61,20 +61,20 @@ def test_sma_cross_none_when_steady():
 # --- 52-week high / low ---
 
 def test_pct_off_52w_high():
-    close = bseries([180, 190, 150])
-    high = bseries([200, 195, 155])
+    close = bseries([180.0] * 249 + [150.0])
+    high = bseries([200.0] * 249 + [155.0])
     assert metrics.pct_off_52w_high(close, high) == pytest.approx(-25.0)
 
 
 def test_new_52w_extreme_high():
-    high = bseries([100, 120, 130])
-    low = bseries([90, 110, 120])
+    high = bseries([100.0] * 249 + [130.0])
+    low = bseries([90.0] * 249 + [120.0])
     assert metrics.new_52w_extreme(high, low) == "high"
 
 
 def test_new_52w_extreme_none():
-    high = bseries([100, 120, 110])
-    low = bseries([90, 105, 100])
+    high = bseries([100.0] * 248 + [120.0, 110.0])
+    low = bseries([90.0] * 248 + [105.0, 100.0])
     assert metrics.new_52w_extreme(high, low) is None
 
 
@@ -209,3 +209,53 @@ def test_group_aggregates_first_appearance_order():
     assert [b["group"] for b in baskets] == ["b", "a"]
     assert baskets[0]["n"] == 2
     assert baskets[0]["avg_pct_1d"] == pytest.approx(2.0)
+
+
+# --- short-history guards ---
+#
+# trade.xyz markets carry as little as 80 daily bars. Without these guards an
+# 80-bar maximum would render as a "new 52w high", which is a claim the data
+# cannot support.
+
+def test_52w_metrics_refuse_short_history():
+    short = bseries(range(1, 101))            # 100 bars, monotonically rising
+    assert metrics.new_52w_extreme(short, short) is None
+    assert metrics.pct_off_52w_high(short, short) is None
+    assert metrics.pct_1y(short) is None
+
+
+def test_52w_metrics_answer_at_the_threshold():
+    """The guard must not be so blunt that a real year of data goes silent."""
+    n = metrics.MIN_52W_BARS
+    rising = bseries(range(1, n + 1))
+    assert metrics.new_52w_extreme(rising, rising) == "high"
+    assert metrics.pct_off_52w_high(rising, rising) == pytest.approx(0.0)
+    assert metrics.pct_1y(rising) is not None
+    assert metrics.new_52w_extreme(bseries(range(1, n)), bseries(range(1, n))) is None
+
+
+def test_short_history_still_yields_the_metrics_it_can_support():
+    """Guarding the year-scale metrics must not blank the whole row — %1D, the
+    20SMA and the sparkline are all honest on 100 bars."""
+    short = bseries(range(1, 101))
+    assert metrics.pct_1d(short) is not None
+    assert metrics.sma_state(short, 20) is not None
+    assert metrics.sma_state(short, 200) is None      # genuinely not computable
+    assert metrics.sparkline(short)
+
+
+def test_pct_ytd_is_none_when_the_series_starts_mid_year():
+    """A market that listed in May has no year-to-date. Falling back to its
+    first bar labelled the listing-to-date move as YTD — trade.xyz's SPCX
+    reported -42.2% YTD off 80 bars that all began on 2026-05-17."""
+    idx = pd.bdate_range(start="2026-05-18", periods=50)
+    close = pd.Series([100.0] * 49 + [58.0], index=idx)
+    assert metrics.pct_ytd(close) is None
+
+
+def test_pct_ytd_still_falls_back_for_a_january_listing():
+    """The fallback exists for a name that started trading in January, where
+    'since the first close' really is year-to-date."""
+    idx = pd.bdate_range(start="2026-01-05", periods=50)
+    close = pd.Series([100.0] * 49 + [120.0], index=idx)
+    assert metrics.pct_ytd(close) == pytest.approx(20.0)

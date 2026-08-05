@@ -37,18 +37,22 @@ def _empty_row(holding, info):
 
 
 # snapshot fields the TradingView screener may override (history-derived
-# series — spark, RS, SMA state, gaps — always stay Yahoo-based)
-_TV_OVERRIDE_KEYS = ("name", "sector", "price", "pct_1d", "market_cap", "pe", "ps",
-                     "pct_ytd", "pct_off_high", "atr_pct", "rel_vol", "earnings_date",
-                     "tv_symbol")
+# series — spark, RS, SMA state, gaps — always stay history-based)
+_TV_PRICE_KEYS = ("price", "pct_1d", "pct_ytd", "pct_off_high", "atr_pct", "rel_vol")
+_TV_FUNDAMENTAL_KEYS = ("name", "sector", "market_cap", "pe", "ps", "earnings_date",
+                        "tv_symbol")
+_TV_OVERRIDE_KEYS = _TV_PRICE_KEYS + _TV_FUNDAMENTAL_KEYS
 
 
 def build_rows(hists, bench_close, infos, holdings, today, tv=None):
     rows = []
     for holding in holdings:
         ticker = holding["ticker"]
-        row = _empty_row(holding, infos.get(ticker) or {})
-        hist = hists.get(ticker)
+        # Namespaced by source, so a Yahoo NVDA and a trade.xyz NVDA can both
+        # be in flight in one run. Falls back for callers that predate it.
+        key = holding.get("key") or ticker
+        row = _empty_row(holding, infos.get(key) or {})
+        hist = hists.get(key)
         prev_close = None
         if hist is not None and len(hist):
             close, high, low = hist["Close"], hist["High"], hist["Low"]
@@ -77,10 +81,18 @@ def build_rows(hists, bench_close, infos, holdings, today, tv=None):
                 if cross:
                     row["sma_cross"][str(window)] = cross
 
-        tv_data = (tv or {}).get(ticker) or {}
-        for key in _TV_OVERRIDE_KEYS:
-            if tv_data.get(key) is not None:
-                row[key] = tv_data[key]
+        # A venue row takes only fundamentals from the screener, and only under
+        # the equity it explicitly declares. Its prices are 24/7 perp marks —
+        # overwriting them with a spot close would put two different instruments
+        # in one row — and its symbol is the venue's, not a US ticker.
+        if holding.get("source", "yahoo") == "yahoo":
+            tv_keys, tv_lookup = _TV_OVERRIDE_KEYS, ticker
+        else:
+            tv_keys, tv_lookup = _TV_FUNDAMENTAL_KEYS, holding.get("equity")
+        tv_data = ((tv or {}).get(tv_lookup) or {}) if tv_lookup else {}
+        for tv_key in tv_keys:
+            if tv_data.get(tv_key) is not None:
+                row[tv_key] = tv_data[tv_key]
         if holding.get("name"):
             row["name"] = holding["name"]
         if holding.get("tv_symbol"):

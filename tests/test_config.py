@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from tapedeck import config
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def write_yaml(tmp_path, text):
@@ -186,3 +190,99 @@ def test_vwap_alert_pct_negative_rejected(tmp_path):
     p.write_text("vwap_alert_pct: -3\nholdings:\n  - ticker: NVDA\n")
     with pytest.raises(ValueError, match="vwap_alert_pct"):
         config.load_config(p)
+
+
+# ---------- source ----------
+
+def write(tmp_path, text):
+    return config.load_config(write_yaml(tmp_path, text))
+
+
+def test_source_defaults_to_yahoo_with_bare_ticker_keys(tmp_path):
+    """Every list that existed before trade.xyz support must load unchanged."""
+    cfg = write(tmp_path, "holdings:\n  - ticker: NVDA\n")
+    assert cfg["source"] == "yahoo"
+    assert cfg["benchmark"] == "SPY"
+    assert cfg["holdings"][0]["key"] == "NVDA"
+    assert cfg["holdings"][0]["source"] == "yahoo"
+
+
+def test_hyperliquid_source_namespaces_the_fetch_key(tmp_path):
+    """The key is what keeps a Yahoo NVDA and a trade.xyz NVDA from colliding
+    in the one shared hists dict."""
+    cfg = write(tmp_path, "source: hyperliquid\nholdings:\n  - ticker: NVDA\n")
+    assert cfg["source"] == "hyperliquid"
+    assert cfg["holdings"][0]["ticker"] == "NVDA"     # display stays bare
+    assert cfg["holdings"][0]["key"] == "xyz:NVDA"
+
+
+def test_hyperliquid_defaults_benchmark_to_sp500(tmp_path):
+    """SPY is not a market on the venue; SP500 is."""
+    cfg = write(tmp_path, "source: hyperliquid\nholdings:\n  - ticker: NVDA\n")
+    assert cfg["benchmark"] == "SP500"
+
+
+def test_explicit_benchmark_still_wins_for_hyperliquid(tmp_path):
+    cfg = write(tmp_path, "source: hyperliquid\nbenchmark: xyz100\nholdings:\n  - ticker: NVDA\n")
+    assert cfg["benchmark"] == "XYZ100"
+
+
+def test_dex_override_reaches_the_key(tmp_path):
+    cfg = write(tmp_path, "source: hyperliquid\ndex: flx\nholdings:\n  - ticker: NVDA\n")
+    assert cfg["dex"] == "flx"
+    assert cfg["holdings"][0]["key"] == "flx:NVDA"
+
+
+def test_source_is_case_insensitive(tmp_path):
+    cfg = write(tmp_path, "source: HyperLiquid\nholdings:\n  - ticker: NVDA\n")
+    assert cfg["source"] == "hyperliquid"
+
+
+def test_unknown_source_is_rejected(tmp_path):
+    """A typo must fail loudly at load, not silently fetch from Yahoo and
+    render perp tickers as blank rows."""
+    with pytest.raises(ValueError, match="unknown source"):
+        write(tmp_path, "source: coinbase\nholdings:\n  - ticker: NVDA\n")
+
+
+def test_source_propagates_through_load_watchlists(tmp_path):
+    d = tmp_path / "wl"
+    d.mkdir()
+    (d / "book.yaml").write_text("source: hyperliquid\nholdings:\n  - ticker: GOLD\n")
+    (d / "equities.yaml").write_text("holdings:\n  - ticker: NVDA\n")
+    lists = {w["name"]: w for w in config.load_watchlists(d)}
+    assert lists["book"]["source"] == "hyperliquid"
+    assert lists["book"]["holdings"][0]["key"] == "xyz:GOLD"
+    assert lists["equities"]["source"] == "yahoo"
+    assert lists["equities"]["holdings"][0]["key"] == "NVDA"
+
+
+def test_scaffold_template_still_loads(tmp_path):
+    """The template gained a commented-out source: line — it must stay valid."""
+    path = config.new_watchlist(tmp_path, "fresh list")
+    cfg = config.load_config(path)
+    assert cfg["source"] == "yahoo"
+
+
+def test_equity_defaults_to_none_and_uppercases(tmp_path):
+    cfg = write(tmp_path, "source: hyperliquid\nholdings:\n"
+                          "  - ticker: GOLD\n"
+                          "  - {ticker: SKHX, equity: 000660.ks}\n")
+    holdings = {h["ticker"]: h for h in cfg["holdings"]}
+    assert holdings["GOLD"]["equity"] is None      # bullion, not Barrick
+    assert holdings["SKHX"]["equity"] == "000660.KS"
+
+
+def test_generated_tradexyz_universe_declares_equity_only_where_it_applies(tmp_path):
+    """Guards the catalog in scripts/sync_tradexyz.py: a commodity or FX market
+    that picks up an `equity:` would import an unrelated company's fundamentals."""
+    path = ROOT / "watchlists" / "tradexyz-universe.yaml"
+    if not path.exists():
+        pytest.skip("universe watchlist not generated in this checkout")
+    holdings = {h["ticker"]: h for h in config.load_config(path)["holdings"]}
+    for symbol in ("GOLD", "SILVER", "COPPER", "CL", "BRENTOIL", "NATGAS",
+                   "EUR", "GBP", "JPY", "SP500", "XYZ100", "JP225", "KR200",
+                   "SPCX", "CXMT", "ZHIPU", "SKHX", "SMSN"):
+        assert holdings[symbol]["equity"] is None, symbol
+    for symbol in ("NVDA", "MU", "AAPL", "SMH"):
+        assert holdings[symbol]["equity"] == symbol, symbol

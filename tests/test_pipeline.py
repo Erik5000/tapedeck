@@ -120,3 +120,99 @@ def test_build_rows_missing_history_degrades():
     assert amd["spark"] == []
     assert amd["sma"] == {}
     assert amd["position"] is None
+
+
+# ---------- namespaced fetch keys ----------
+
+def test_rows_look_up_history_by_key_not_ticker():
+    """A venue holding's history lives under xyz:NVDA while the row still
+    displays NVDA — looking up by ticker would silently produce an empty row."""
+    hists = {"xyz:NVDA": make_hist(end=200.0)}
+    holdings = [{"ticker": "NVDA", "key": "xyz:NVDA", "source": "hyperliquid",
+                 "name": None, "group": None, "shares": None, "cost_basis": None,
+                 "tv_symbol": None}]
+    rows, _ = pipeline.build_rows(hists, None, {}, holdings, TODAY)
+    assert rows[0]["ticker"] == "NVDA"
+    assert rows[0]["price"] == pytest.approx(200.0)
+
+
+def test_the_same_ticker_on_two_sources_gets_its_own_prices():
+    """The whole reason keys are namespaced: NVDA in a Yahoo list and NVDA on
+    trade.xyz are two different instruments in one run."""
+    hists = {"NVDA": make_hist(end=200.0), "xyz:NVDA": make_hist(end=333.0)}
+    base = {"name": None, "group": None, "shares": None, "cost_basis": None, "tv_symbol": None}
+    yahoo, = pipeline.build_rows(
+        hists, None, {}, [dict(base, ticker="NVDA", key="NVDA", source="yahoo")], TODAY)[0]
+    venue, = pipeline.build_rows(
+        hists, None, {}, [dict(base, ticker="NVDA", key="xyz:NVDA",
+                               source="hyperliquid")], TODAY)[0]
+    assert yahoo["price"] == pytest.approx(200.0)
+    assert venue["price"] == pytest.approx(333.0)
+
+
+def test_holdings_without_a_key_still_resolve_by_ticker():
+    """Back-compat for callers that build holdings by hand (tests, --config)."""
+    hists = {"NVDA": make_hist(end=200.0)}
+    holdings = [{"ticker": "NVDA", "name": None, "group": None, "shares": None,
+                 "cost_basis": None, "tv_symbol": None}]
+    rows, _ = pipeline.build_rows(hists, None, {}, holdings, TODAY)
+    assert rows[0]["price"] == pytest.approx(200.0)
+
+
+def test_venue_rows_take_fundamentals_from_tradingview_but_never_prices():
+    """A venue row's price is a 24/7 perp mark. Letting the screener's spot
+    close overwrite it would put two different instruments in one row."""
+    hists = {"xyz:NVDA": make_hist(end=200.0)}
+    tv = {"NVDA": {"price": 999.0, "pct_1d": 42.0, "market_cap": 4.7e12,
+                   "sector": "Technology", "earnings_date": "2026-08-26"}}
+    holdings = [{"ticker": "NVDA", "key": "xyz:NVDA", "source": "hyperliquid",
+                 "equity": "NVDA", "name": None, "group": None, "shares": None,
+                 "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["price"] == pytest.approx(200.0)        # venue, not 999
+    assert row["pct_1d"] != pytest.approx(42.0)
+    assert row["market_cap"] == 4.7e12                 # fundamentals do come through
+    assert row["sector"] == "Technology"
+    assert row["earnings_date"] == "2026-08-26"        # keeps earnings alerts working
+
+
+def test_venue_market_without_a_declared_equity_takes_no_fundamentals():
+    """The venue's GOLD is bullion; NYSE GOLD is Barrick Mining. Its CL is WTI
+    crude; NYSE CL is Colgate-Palmolive. Matching on the bare symbol handed
+    crude oil a market cap and an earnings date, which then fired an earnings
+    alert for a barrel of oil."""
+    hists = {"xyz:CL": make_hist(end=75.0)}
+    tv = {"CL": {"market_cap": 7.2e10, "sector": "Consumer Defensive",
+                 "earnings_date": "2026-08-07", "name": "Colgate-Palmolive"}}
+    holdings = [{"ticker": "CL", "key": "xyz:CL", "source": "hyperliquid",
+                 "equity": None, "name": "WTI Crude", "group": "energy",
+                 "shares": None, "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["market_cap"] is None
+    assert row["sector"] is None
+    assert row["earnings_date"] is None
+    assert row["name"] == "WTI Crude"                  # the watchlist's own name wins
+    assert row["price"] == pytest.approx(75.0)
+
+
+def test_venue_equity_lookup_is_independent_of_the_venue_symbol():
+    """SKHX on the venue is SK hynix; the fundamentals key need not match."""
+    hists = {"xyz:SKHX": make_hist(end=1170.0)}
+    tv = {"SKHX": {"market_cap": 1.0, "sector": "WRONG"},
+          "000660.KS": {"market_cap": 9.9e11, "sector": "Technology"}}
+    holdings = [{"ticker": "SKHX", "key": "xyz:SKHX", "source": "hyperliquid",
+                 "equity": "000660.KS", "name": None, "group": None,
+                 "shares": None, "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["market_cap"] == 9.9e11
+    assert row["sector"] == "Technology"
+
+
+def test_yahoo_rows_still_take_prices_from_tradingview():
+    """The screener override is the documented default for Yahoo lists."""
+    hists = {"NVDA": make_hist(end=200.0)}
+    tv = {"NVDA": {"price": 999.0, "market_cap": 1.0}}
+    holdings = [{"ticker": "NVDA", "key": "NVDA", "source": "yahoo", "name": None,
+                 "group": None, "shares": None, "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["price"] == 999.0

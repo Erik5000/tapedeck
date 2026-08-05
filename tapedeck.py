@@ -89,7 +89,7 @@ def main():
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
 
     from tapedeck import alerts as alerts_mod
-    from tapedeck import config, feed, fetch, metrics, pipeline, render, snapshot, tvscan, vaultlink, vwaplink
+    from tapedeck import config, feed, fetch, hlfetch, metrics, pipeline, render, snapshot, tvscan, vaultlink, vwaplink
 
     if args.new_list:
         path = config.new_watchlist(ROOT / "watchlists", args.new_list)
@@ -106,6 +106,7 @@ def main():
             print("note: anti_basket is ignored in --config single-list mode", file=sys.stderr)
         watchlists = [{"name": stem,
                        "title": cfg["title"] or stem.replace("-", " ").replace("_", " ").title(),
+                       "source": cfg["source"], "dex": cfg["dex"],
                        "benchmark": cfg["benchmark"], "holdings": cfg["holdings"],
                        "cockpit": cfg["cockpit"], "anti_basket": None,
                        "vwap": cfg["vwap"], "vwap_alert_pct": cfg["vwap_alert_pct"]}]
@@ -120,9 +121,26 @@ def main():
         if not watchlists:
             sys.exit(f"error: no watchlist matches --list {args.only}")
 
+    def source_of(wl):
+        return wl.get("source") or "yahoo"
+
+    def dex_of(wl):
+        return wl.get("dex") or hlfetch.DEFAULT_DEX
+
+    def bench_key(wl):
+        """The benchmark under the same namespace as the list's own holdings."""
+        return (wl["benchmark"] if source_of(wl) == "yahoo"
+                else hlfetch.qualify(wl["benchmark"], dex_of(wl)))
+
+    # The screener matches bare US names: a Yahoo holding's own ticker, and for
+    # a venue holding only the equity it explicitly declares. Namespaced keys
+    # drive the fetches, so one ticker can sit on two sources at once.
     all_tickers = list(dict.fromkeys(
-        h["ticker"] for w in watchlists for h in w["holdings"]))
-    benchmarks = list(dict.fromkeys(w["benchmark"] for w in watchlists))
+        (h["ticker"] if source_of(w) == "yahoo" else h.get("equity"))
+        for w in watchlists for h in w["holdings"]
+        if source_of(w) == "yahoo" or h.get("equity")))
+    all_keys = list(dict.fromkeys(
+        h["key"] if h.get("key") else h["ticker"] for w in watchlists for h in w["holdings"]))
     today = date.today()
 
     tv = None
@@ -133,19 +151,44 @@ def main():
         except Exception as exc:
             print(f"warning: tradingview screener failed ({exc}) — using Yahoo fundamentals", file=sys.stderr)
 
-    info_tickers = None if tv is None else [t for t in all_tickers if t not in tv]
-    print(f"TAPEDECK · fetching history: {len(all_tickers)} tickers + {'/'.join(benchmarks)} "
-          f"across {len(watchlists)} watchlist(s) …", file=sys.stderr)
-    hists, bench_closes, infos = fetch.fetch_universe(all_tickers, benchmarks, info_tickers=info_tickers)
+    yahoo_lists = [w for w in watchlists if source_of(w) == "yahoo"]
+    hl_lists = [w for w in watchlists if source_of(w) == "hyperliquid"]
+    hists, bench_closes, infos = {}, {}, {}
 
-    missing = [t for t in all_tickers if t not in hists]
+    if yahoo_lists:
+        y_tickers = list(dict.fromkeys(h["ticker"] for w in yahoo_lists for h in w["holdings"]))
+        y_bench = list(dict.fromkeys(w["benchmark"] for w in yahoo_lists))
+        info_tickers = None if tv is None else [t for t in y_tickers if t not in tv]
+        print(f"TAPEDECK · fetching history: {len(y_tickers)} tickers + {'/'.join(y_bench)} "
+              f"across {len(yahoo_lists)} watchlist(s) …", file=sys.stderr)
+        y_hists, y_bench_closes, y_infos = fetch.fetch_universe(
+            y_tickers, y_bench, info_tickers=info_tickers)
+        hists.update(y_hists)
+        bench_closes.update(y_bench_closes)
+        infos.update(y_infos)
+
+    by_dex = {}
+    for wl in hl_lists:
+        tickers, benches = by_dex.setdefault(dex_of(wl), ([], []))
+        tickers.extend(h["ticker"] for h in wl["holdings"])
+        benches.append(wl["benchmark"])
+    for dex, (tickers, benches) in by_dex.items():
+        tickers = list(dict.fromkeys(tickers))
+        benches = list(dict.fromkeys(benches))
+        print(f"TAPEDECK · fetching {dex} history: {len(tickers)} markets + "
+              f"{'/'.join(benches)} …", file=sys.stderr)
+        h_hists, h_bench_closes, _ = hlfetch.fetch_universe(tickers, benches, dex=dex)
+        hists.update(h_hists)
+        bench_closes.update(h_bench_closes)
+
+    missing = [k for k in all_keys if k not in hists]
     if missing:
         print(f"warning: no price history for {', '.join(missing)} (rows degrade)", file=sys.stderr)
 
     out_dir = ROOT / "output"
     rendered_lists = []
     for wl in watchlists:
-        bench_close = bench_closes.get(wl["benchmark"])
+        bench_close = bench_closes.get(bench_key(wl))
         if bench_close is None:
             print(f"warning: no benchmark history for {wl['benchmark']} ({wl['name']}) — RS shows n/a",
                   file=sys.stderr)
