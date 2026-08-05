@@ -14,11 +14,21 @@ cd native && make install      # → ~/Applications/TAPEDECK.app
 ```
 
 Its own Dock icon and window. Opening it starts a local server; quitting it
-stops that server. The dashboard gains two buttons in its controls row:
-**⟳ Refresh** (re-runs the fetch, ~20s) and **◇ Rescan VWAP** (re-runs
-[vwap-scanner](../vwap-scanner), ~8 min cold). Both stream the run's progress
-into a live status line and reload the page when it finishes; one job runs at
-a time. Launch is instant — it shows the last run and only fetches when asked.
+stops that server. The dashboard gains three buttons in its controls row:
+**⟳ Refresh** (re-runs the fetch, ~20s), **◇ Rescan VWAP** (re-runs
+[vwap-scanner](../vwap-scanner), ~8 min cold) and **✎ Lists** (the watchlist
+editor). The two run buttons stream progress into a live status line and reload
+the page when they finish; one job runs at a time. Launch is instant — it shows
+the last run and only fetches when asked.
+
+**✎ Lists** creates and edits watchlists without leaving the app: add and remove
+tickers, set the title, benchmark, source, groups, shares and cost basis, then
+**Save & Refresh** to fetch the new list straight away. Ticker input
+autocompletes from the venue's live market list when a list's source is
+trade.xyz. Two things worth knowing: a saved file is rewritten by the editor, so
+**comments in it are lost** (the editor warns you first), and every save or
+delete copies the previous version to `output/watchlist-backups/` first. Writes
+are refused while a fetch is running, since that run is reading the same files.
 
 Needs Xcode plus `brew install xcodegen librsvg` once. Build details, the
 shutdown guarantees and the design notes are in [`native/README.md`](native/README.md).
@@ -59,7 +69,8 @@ next run. The page remembers which tab you had open.
 ```yaml
 title: My Semis        # tab label (default: prettified filename)
 order: 3               # tab position (lists without order go last, alphabetical)
-benchmark: SPY         # RS reference for this list
+benchmark: SPY         # RS reference for this list (SP500 when source is trade.xyz)
+source: yahoo          # or hyperliquid — see "Price sources" below
 cockpit: /path/to/COCKPIT.md   # optional: read-only status panel parsed from this markdown file
 anti_basket: other-list        # optional: aggregate that list as an "anti-basket" row in the Baskets table
 vwap: /path/to/vwap-latest.json   # optional: VWAP levels from a vwap-scanner --json-out feed
@@ -73,9 +84,36 @@ holdings:
     tv_symbol: NASDAQ:NVDA  # optional TradingView override for the chart panel
 ```
 
-All lists are fetched in ONE batch (union of tickers), so more lists barely
-cost time. Each list keeps its own alerts, since-last-run delta, snapshots
-(`output/snapshots/<list>/`), positions and benchmark.
+All lists on a source are fetched in ONE batch (union of tickers), so more lists
+barely cost time. Each list keeps its own alerts, since-last-run delta,
+snapshots (`output/snapshots/<list>/`), positions and benchmark.
+
+**Create a list from the app** with **✎ Lists**, or from the terminal with
+`tapedeck.py --new "name"`.
+
+### Price sources
+
+`source: yahoo` (the default) is the whole story for normal watchlists.
+`source: hyperliquid` reads [trade.xyz](https://trade.xyz) instead — XYZ markets
+on HyperCore — so a list of perps shows the marks you actually trade rather than
+a spot proxy. Holdings use the venue's own symbols (`GOLD`, `COPPER`, `SKHX`,
+`SPCX`), and `dex: xyz` is the default namespace.
+
+Two honest limitations, both visible on the page as `n/a` rather than papered
+over:
+
+- **The markets are young** (listed between late 2025 and mid 2026), so 52w
+  high/low, %YTD, %1Y and the 200SMA stay blank until enough history accrues.
+  Bars are 24/7 and weekend bars are dropped, so the SMA windows keep their
+  trading-day meaning.
+- **The venue publishes no fundamentals.** Market cap, P/E, P/S, sector and
+  earnings come from the TradingView screener, and only under an explicit
+  `equity:` on the holding — the venue's `GOLD` is bullion while NYSE `GOLD` is
+  Barrick, and its `CL` is WTI crude while NYSE `CL` is Colgate-Palmolive, so
+  matching on the bare symbol would be wrong in a way that fires real alerts.
+
+`scripts/sync_tradexyz.py --write` regenerates a watchlist of every live market
+from the venue's API, and reports what has been listed or delisted since.
 
 ## What's on the page
 
@@ -105,7 +143,11 @@ cost time. Each list keeps its own alerts, since-last-run delta, snapshots
 - **Alerts** — new 52w high/low, 20/50/200 SMA crosses (vs yesterday), gaps ≥5%,
   earnings ≤7 days, plus VWAP proximity (`kind: "vwap"`) when `vwap:` is set —
   on a live watchlist this can be roughly half of all alerts, so a downstream
-  consumer of `output/tapedeck-latest.json`'s `alerts` array should expect it
+  consumer of `output/tapedeck-latest.json`'s `alerts` array should expect it.
+  One row per ticker, busiest names first, so a name's VWAP chip sits with its
+  SMA ones; chips print a short label and carry the full sentence on hover. The
+  grouping is a render-time view — the feed's `alerts` array stays flat and in
+  watchlist order
 - **Since last run** — price moves, SMA state flips, added/removed tickers vs the previous snapshot (`output/snapshots/`)
 - **Table (Core)** — price, %1D and %YTD heat, market cap, P/S (amber heat) / P/E, 1Y sparkline, Δ 52w-high drawdown bar, RS-vs-benchmark 1M mini bars + cross-sectional rank, SMA arrows
 - **Extended toggle** — RS 1M/3M %, % distance to each SMA, relative volume, ATR%, next earnings, sector

@@ -22,9 +22,11 @@ from datetime import date
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, unquote
 
-from . import vwaplink
+from . import hlfetch, vwaplink, wlstore
 from .jobs import JobBusy, JobRunner
+from .wlstore import WatchlistError
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVICE = "tapedeck"
@@ -87,7 +89,10 @@ class AppState:
     def __init__(self, root=ROOT, vwap_scanner=None, owner_pid=None):
         self.root = Path(root)
         self.out_dir = self.root / "output"
+        self.wl_dir = self.root / "watchlists"
+        self.backup_dir = self.out_dir / "watchlist-backups"
         self.jobs = JobRunner()
+        self._markets = {}            # dex -> (fetched_at, [symbols])
         self.owner_pid = owner_pid
         self._feed_cache = None
         self.vwap_scanner = Path(vwap_scanner) if vwap_scanner else self.root.parent / "vwap-scanner"
@@ -126,6 +131,24 @@ class AppState:
         if not self._feed_cache or self._feed_cache[0] != mtime:
             self._feed_cache = (mtime, vwaplink.load_vwap(path))
         return self._feed_cache[1]
+
+    def markets(self, dex=hlfetch.DEFAULT_DEX, max_age=900):
+        """Live venue symbols for the editor's ticker picker, cached.
+
+        The picker asks on every keystroke; the venue's market list changes on
+        the order of weeks. Degrades to [] rather than raising — a picker
+        without autocomplete still accepts typed input.
+        """
+        cached = self._markets.get(dex)
+        if cached and time.time() - cached[0] < max_age:
+            return cached[1]
+        try:
+            names = hlfetch.list_markets(dex=dex)
+        except Exception as exc:
+            print(f"[tapedeck] market list unavailable ({exc})", flush=True)
+            return cached[1] if cached else []
+        self._markets[dex] = (time.time(), names)
+        return names
 
     def status(self):
         found = latest_dashboard(self.out_dir)
@@ -185,6 +208,29 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, "application/json", json.dumps(obj, default=str).encode())
 
+    def _body(self):
+        """Read and JSON-decode the request body.
+
+        Always drains, even on a route that wants nothing: on a keep-alive
+        connection an unread body is parsed as the start of the next request.
+        Returns None when there is no body or it isn't JSON — the route decides
+        whether that's an error.
+        """
+        try:
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        except (ValueError, OSError):
+            return None
+        if not raw:
+            return None
+        try:
+            return json.loads(raw.decode())
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+    def _query(self):
+        _, _, qs = self.path.partition("?")
+        return {k: v[0] for k, v in parse_qs(qs).items() if v}
+
     # --- routes ---
 
     def do_GET(self):
@@ -202,15 +248,17 @@ class Handler(BaseHTTPRequestHandler):
                                "owner_pid": self.state.owner_pid})
         if path == "/api/status":
             return self._json(self.state.status())
+        if path == "/api/watchlists":
+            return self._json({"lists": wlstore.summaries(self.state.wl_dir)})
+        if path.startswith("/api/watchlists/"):
+            return self._watchlist(path, self._read_one)
+        if path == "/api/markets":
+            dex = self._query().get("dex", hlfetch.DEFAULT_DEX)
+            return self._json({"dex": dex, "markets": self.state.markets(dex)})
         self._json({"error": "not found", "path": path}, code=404)
 
     def do_POST(self):
-        # Drain first: on a keep-alive connection an unread body would be parsed
-        # as the start of the next request.
-        try:
-            self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        except (ValueError, OSError):
-            pass
+        body = self._body()
         if not self._guard():
             return
         path = self.path.split("?", 1)[0]
@@ -223,7 +271,79 @@ class Handler(BaseHTTPRequestHandler):
                                    "looked_in": str(self.state.vwap_scanner)}, code=503)
             return self._start("vwap", self.state.vwap_argv(),
                                self.state.vwap_scanner, VWAP_TIMEOUT)
+        if path == "/api/watchlists":
+            return self._create(body)
         self._json({"error": "not found", "path": path}, code=404)
+
+    def do_PUT(self):
+        body = self._body()
+        if not self._guard():
+            return
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/watchlists/"):
+            return self._watchlist(path, lambda name: self._save(name, body))
+        self._json({"error": "not found", "path": path}, code=404)
+
+    def do_DELETE(self):
+        self._body()
+        if not self._guard():
+            return
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/watchlists/"):
+            return self._watchlist(path, self._delete_one)
+        self._json({"error": "not found", "path": path}, code=404)
+
+    # --- watchlist editing ---
+
+    def _watchlist(self, path, handler):
+        """Route /api/watchlists/<name>, turning store errors into 4xx."""
+        name = unquote(path[len("/api/watchlists/"):]).strip("/")
+        try:
+            return handler(name)
+        except WatchlistError as exc:
+            return self._json({"error": str(exc)}, code=400)
+        except OSError as exc:
+            return self._json({"error": f"filesystem error: {exc}"}, code=500)
+
+    def _read_one(self, name):
+        return self._json(wlstore.read(self.state.wl_dir, name))
+
+    def _busy(self):
+        """A refresh subprocess reads these files as it runs. Writing one
+        mid-run risks the fetch seeing half a watchlist."""
+        if self.state.jobs.running():
+            self._json({"error": "a run is in progress — try again when it finishes",
+                        "job": self.state.jobs.snapshot()}, code=409)
+            return True
+        return False
+
+    def _create(self, body):
+        if self._busy():
+            return
+        try:
+            name = wlstore.create(self.state.wl_dir, (body or {}).get("name") or "",
+                                  title=(body or {}).get("title"))
+        except WatchlistError as exc:
+            # "already exists" is a conflict; a bad name is a bad request.
+            code = 409 if "exists" in str(exc) else 400
+            return self._json({"error": str(exc)}, code=code)
+        except OSError as exc:
+            return self._json({"error": f"filesystem error: {exc}"}, code=500)
+        return self._json(wlstore.read(self.state.wl_dir, name), code=201)
+
+    def _save(self, name, body):
+        if self._busy():
+            return
+        if not isinstance(body, dict):
+            raise WatchlistError("expected a JSON object")
+        wlstore.save(self.state.wl_dir, name, body, backup_dir=self.state.backup_dir)
+        return self._json(wlstore.read(self.state.wl_dir, name))
+
+    def _delete_one(self, name):
+        if self._busy():
+            return
+        wlstore.delete(self.state.wl_dir, name, backup_dir=self.state.backup_dir)
+        return self._json({"deleted": name})
 
     def _start(self, kind, argv, cwd, timeout):
         try:

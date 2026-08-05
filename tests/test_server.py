@@ -391,3 +391,165 @@ def test_shell_js_drives_the_endpoints_this_server_exposes():
         assert route in shell, f"{route} missing from the app shell"
     assert ".controls" in shell        # where the buttons are inserted
     assert "tbtn" in shell             # the page's own button class
+
+
+# ---------- watchlist editor routes ----------
+
+def req(base, method, path, body=None, headers=None):
+    data = None if body is None else json.dumps(body).encode()
+    r = urllib.request.Request(base + path, data=data, method=method,
+                              headers=headers or {})
+    if data is not None:
+        r.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw or "{}")
+        except ValueError:
+            return e.code, {"raw": raw}
+
+
+@pytest.fixture
+def wl_repo(repo):
+    d = repo / "watchlists"
+    d.mkdir()
+    (d / "book.yaml").write_text("title: My Book\nholdings:\n  - {ticker: NVDA}\n")
+    return repo
+
+
+@pytest.fixture
+def wl_base(wl_repo):
+    state = srv.AppState(root=wl_repo, vwap_scanner=wl_repo / "no-such-scanner")
+    httpd = srv.make_server("127.0.0.1", 0, state)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    httpd.tstate = state
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", state
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_list_watchlists(wl_base):
+    base, _ = wl_base
+    code, data = req(base, "GET", "/api/watchlists")
+    assert code == 200
+    assert [l["name"] for l in data["lists"]] == ["book"]
+    assert data["lists"][0]["title"] == "My Book"
+
+
+def test_read_one_watchlist(wl_base):
+    base, _ = wl_base
+    code, data = req(base, "GET", "/api/watchlists/book")
+    assert code == 200
+    assert data["name"] == "book"
+    assert data["holdings"][0]["ticker"] == "NVDA"
+
+
+def test_read_missing_watchlist_is_400(wl_base):
+    base, _ = wl_base
+    code, data = req(base, "GET", "/api/watchlists/ghost")
+    assert code == 400
+    assert "no watchlist" in data["error"]
+
+
+def test_create_then_save_then_delete(wl_base):
+    base, state = wl_base
+    code, data = req(base, "POST", "/api/watchlists", {"name": "my semis"})
+    assert code == 201
+    assert data["name"] == "my-semis"
+
+    model = dict(data, title="Renamed",
+                 holdings=[{"ticker": "AMD", "group": "semis"},
+                           {"ticker": "MU"}])
+    code, saved = req(base, "PUT", "/api/watchlists/my-semis", model)
+    assert code == 200
+    assert saved["title"] == "Renamed"
+    assert [h["ticker"] for h in saved["holdings"]] == ["AMD", "MU"]
+    assert (state.wl_dir / "my-semis.yaml").exists()
+
+    code, _ = req(base, "DELETE", "/api/watchlists/my-semis")
+    assert code == 200
+    assert not (state.wl_dir / "my-semis.yaml").exists()
+    assert list((state.backup_dir).glob("my-semis-*.yaml"))
+
+
+def test_create_duplicate_is_409(wl_base):
+    base, _ = wl_base
+    assert req(base, "POST", "/api/watchlists", {"name": "book"})[0] == 409
+
+
+def test_create_bad_name_is_400(wl_base):
+    base, _ = wl_base
+    assert req(base, "POST", "/api/watchlists", {"name": "../evil"})[0] == 400
+
+
+def test_save_that_would_not_load_is_400_and_leaves_the_file_alone(wl_base):
+    base, state = wl_base
+    before = (state.wl_dir / "book.yaml").read_text()
+    code, data = req(base, "PUT", "/api/watchlists/book",
+                     {"holdings": [{"ticker": "NVDA"}, {"ticker": "nvda"}]})
+    assert code == 400
+    assert "would not load" in data["error"]
+    assert (state.wl_dir / "book.yaml").read_text() == before
+
+
+def test_traversal_through_the_http_layer(wl_base, tmp_path):
+    """The URL path is the one place a name arrives already percent-decoded."""
+    base, _ = wl_base
+    for path in ("/api/watchlists/..%2Fevil", "/api/watchlists/%2Fetc%2Fpasswd",
+                 "/api/watchlists/..", "/api/watchlists/Book"):
+        code, _ = req(base, "PUT", path, {"holdings": [{"ticker": "X"}]})
+        assert code == 400, path
+
+
+def test_writes_are_refused_while_a_job_runs(wl_base):
+    """A refresh subprocess is reading these files; a half-written watchlist
+    during a fetch is a bad failure mode."""
+    base, state = wl_base
+    state.jobs.start("refresh", [sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert req(base, "POST", "/api/watchlists", {"name": "later"})[0] == 409
+        assert req(base, "PUT", "/api/watchlists/book",
+                   {"holdings": [{"ticker": "AMD"}]})[0] == 409
+        assert req(base, "DELETE", "/api/watchlists/book")[0] == 409
+        # Reads stay available — the editor should still open mid-run.
+        assert req(base, "GET", "/api/watchlists")[0] == 200
+        assert req(base, "GET", "/api/watchlists/book")[0] == 200
+    finally:
+        state.jobs.terminate(grace=1.0)
+
+
+def test_editor_routes_reject_a_forged_host(wl_base):
+    base, _ = wl_base
+    code, _ = req(base, "GET", "/api/watchlists", headers={"Host": "evil.example.com"})
+    assert code == 403
+    code, _ = req(base, "PUT", "/api/watchlists/book",
+                  {"holdings": [{"ticker": "X"}]}, headers={"Host": "evil.example.com"})
+    assert code == 403
+
+
+def test_markets_route_is_cached_and_degrades(wl_base, monkeypatch):
+    base, state = wl_base
+    calls = []
+    monkeypatch.setattr(srv.hlfetch, "list_markets",
+                        lambda dex="xyz": calls.append(dex) or ["NVDA", "GOLD"])
+    code, data = req(base, "GET", "/api/markets")
+    assert code == 200
+    assert data["markets"] == ["NVDA", "GOLD"]
+    req(base, "GET", "/api/markets")
+    assert len(calls) == 1          # second call served from cache
+
+    def boom(dex="xyz"):
+        raise OSError("offline")
+    monkeypatch.setattr(srv.hlfetch, "list_markets", boom)
+    state._markets.clear()
+    code, data = req(base, "GET", "/api/markets")
+    assert code == 200 and data["markets"] == []   # a picker still accepts typing
+
+
+def test_unknown_put_and_delete_are_404(wl_base):
+    base, _ = wl_base
+    assert req(base, "PUT", "/api/nope", {})[0] == 404
+    assert req(base, "DELETE", "/api/nope")[0] == 404

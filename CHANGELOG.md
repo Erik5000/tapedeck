@@ -1,5 +1,56 @@
 # TAPEDECK Changelog
 
+## 2026-08-05 — page layout, alert grouping, trade.xyz, watchlist editor
+
+- **The page uses its width.** Cockpit and Baskets tile into a CSS grid instead
+  of each taking a full 2000px row. The cause was one missing rule: the
+  mini-tables had no `width`, so they shrank to their content and left two
+  thirds of the row empty. Grid items also keep an automatic minimum width, so
+  `min-width:0` plus `overflow-x` is what stops a wide sleeve table rendering
+  outside its own card.
+- **Alerts group one row per ticker**, ranked by how much is happening (count,
+  then bad-severity count, then watchlist order). Previously it was up to 54
+  undifferentiated chips in watchlist order with every verbose VWAP alert
+  dumped at the end, because `build_vwap_alerts` is concatenated as a trailing
+  block. Chips now print a short label (`▲20SMA`, `0.2% ATH-Anch`) and carry
+  the full sentence as a tooltip. The grouping is render-time only: the feed's
+  `lists[].alerts` array stays flat and unsorted, since the vwap-scanner reads
+  it. `short` is a new key, which that contract allows.
+- **`source: hyperliquid` — a second price source.** A watchlist can take its
+  prices from [trade.xyz](https://trade.xyz) (XYZ markets on HyperCore) instead
+  of Yahoo. Fetch keys are namespaced (`NVDA` vs `xyz:NVDA`) so one ticker can
+  sit on both sources in a single run. Stdlib-only, no new dependency, no API
+  key — consistent with the rest of tapedeck.
+- **Short history no longer lies.** These markets carry as few as 80 daily bars,
+  so `new_52w_extreme`, `pct_off_52w_high` and `pct_1y` now require
+  `MIN_52W_BARS`, and `pct_ytd` falls back to the first bar only when that bar
+  is in January. Before the guards, SpaceX reported "-42.2% YTD" off a series
+  that began in May. Venue bars are 24/7, so weekend bars are dropped and the
+  SMA windows keep their trading-day meaning.
+- **Fundamentals need an explicit `equity:`.** A venue market takes market cap,
+  P/E, sector and earnings from the TradingView screener only under the US
+  ticker it declares. Matching on the bare symbol was wrong where it mattered:
+  the venue's `GOLD` is bullion but NYSE `GOLD` is Barrick (it picked up a $1B
+  market cap), and its `CL` is WTI crude while NYSE `CL` is Colgate-Palmolive —
+  which would have fired an earnings alert for a barrel of oil.
+- **`scripts/sync_tradexyz.py`** regenerates a watchlist of every live market
+  from the venue's API and reports what has been listed or delisted. 17 of the
+  venue's 105 markets are already delisted, so a hand-written list would rot.
+- **`✎ Lists` — a watchlist editor in the app.** Create a list, add and remove
+  tickers, edit every list setting, then **Save & Refresh** to fetch it. Ticker
+  input autocompletes from the venue's live market list. Backed by new CRUD
+  routes behind the existing loopback + Host guard.
+- **Three properties the editor is built around.** Names go through the same
+  slug rule `--new` uses and every path is checked to sit inside `watchlists/`.
+  Every candidate is parsed by `config.load_config` before it touches disk,
+  because `load_watchlists` has no per-file isolation — one unloadable list
+  would break every list. And every save or delete copies the previous file to
+  `output/watchlist-backups/` first, which is what makes the unavoidable loss
+  of yaml comments recoverable rather than final. Writes return 409 while a
+  fetch is running, since that run is reading the same files.
+- The footer no longer carries the `inspired by @speculator_io` credit.
+- 251 → 365 tests.
+
 ## 2026-08-04 — TAPEDECK.app: a real macOS app
 
 - **`native/` — a SwiftUI + WKWebView app** installed to `~/Applications` with
