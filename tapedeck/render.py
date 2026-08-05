@@ -653,11 +653,12 @@ h1 .brand {{ font-weight:800; }}
 .atk {{ min-width:56px; color:var(--ink); }}
 .panel.pcol {{ display:block; }}
 .panel.pcol .chiprow {{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0 4px; }}
-/* auto-fill, not auto-fit: with a single panel auto-fit collapses the empty
-   track and stretches it the full 2000px -- the exact problem this fixes. */
-.panelgrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(460px,1fr));
+/* Panels tile across the row and stack when there is no room for two.
+   min-width:0 overrides a grid item's auto minimum, without which a wide
+   mini-table refuses to shrink and spills outside its own card. */
+.panelgrid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(460px,1fr));
   gap:10px; align-items:start; margin-bottom:10px; }}
-.panelgrid > .panel {{ margin-bottom:0; }}
+.panelgrid > .panel {{ margin-bottom:0; min-width:0; overflow-x:auto; }}
 .minitbl {{ width:100%; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; margin:2px 0; }}
 .minitbl thead th {{ position:static; cursor:default; font-size:10px; color:var(--muted); text-align:left; }}
 .minitbl th.a-r, .minitbl td.a-r {{ text-align:right; }}
