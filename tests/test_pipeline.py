@@ -216,3 +216,81 @@ def test_yahoo_rows_still_take_prices_from_tradingview():
                  "group": None, "shares": None, "cost_basis": None, "tv_symbol": None}]
     row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
     assert row["price"] == 999.0
+
+
+# ---------- TradingView chart symbols ----------
+
+def test_venue_rows_chart_the_perp_not_a_proxy():
+    """trade.xyz lists its markets on TradingView as HIP3XYZ:<SYM>USDC.P. The
+    bare ticker resolved to nothing at all ("SOFTBANK" → symbol doesn't exist),
+    and an equity proxy is a delayed feed of a different instrument."""
+    assert pipeline.tv_symbol("NVDA", None, source="hyperliquid") == "HIP3XYZ:NVDAUSDC.P"
+    assert pipeline.tv_symbol("GOLD", None, source="hyperliquid") == "HIP3XYZ:GOLDUSDC.P"
+    assert pipeline.tv_symbol("SOFTBANK", None, source="hyperliquid") == "HIP3XYZ:SOFTBANKUSDC.P"
+
+
+def test_venue_chart_symbol_handles_the_one_naming_mismatch():
+    """TradingView follows trade.xyz's docs naming (SKHYNIX) where the API says
+    SKHX — the same docs/API split that affects SMSN and CL."""
+    assert pipeline.tv_symbol("SKHX", None, source="hyperliquid") == "HIP3XYZ:SKHYNIXUSDC.P"
+    assert pipeline.tv_symbol("SKHY", None, source="hyperliquid") == "HIP3XYZ:SKHYUSDC.P"
+
+
+def test_unknown_dex_does_not_invent_a_prefix():
+    """Only xyz has been verified on TradingView. Guessing a prefix would put
+    'symbol doesn't exist' in the panel instead of degrading quietly."""
+    assert pipeline.tv_symbol("NVDA", None, source="hyperliquid", dex="flx") == "NVDA"
+
+
+def test_explicit_tv_symbol_still_wins_for_a_venue_row():
+    assert pipeline.tv_symbol("SKHX", None, override="KRX:000660",
+                              source="hyperliquid") == "KRX:000660"
+
+
+def test_yahoo_chart_symbols_are_unchanged():
+    assert pipeline.tv_symbol("NVDA", "NMS") == "NASDAQ:NVDA"
+    assert pipeline.tv_symbol("SPY", "PCX") == "AMEX:SPY"
+    assert pipeline.tv_symbol("SAP.DE", "GER") == "SAP.DE"
+
+
+def test_screener_cannot_replace_a_venue_rows_chart_symbol():
+    """The screener returns the equity's symbol. On a venue row that would swap
+    the perp chart for a delayed spot chart of a different instrument."""
+    hists = {"xyz:NVDA": make_hist(end=200.0)}
+    tv = {"NVDA": {"tv_symbol": "NASDAQ:NVDA", "market_cap": 4.7e12}}
+    holdings = [{"ticker": "NVDA", "key": "xyz:NVDA", "source": "hyperliquid",
+                 "dex": "xyz", "equity": "NVDA", "name": None, "group": None,
+                 "shares": None, "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["tv_symbol"] == "HIP3XYZ:NVDAUSDC.P"
+    assert row["market_cap"] == 4.7e12      # fundamentals still come through
+
+
+def test_screener_still_supplies_tv_symbol_for_yahoo_rows():
+    hists = {"NVDA": make_hist(end=200.0)}
+    tv = {"NVDA": {"tv_symbol": "NASDAQ:NVDA"}}
+    holdings = [{"ticker": "NVDA", "key": "NVDA", "source": "yahoo", "name": None,
+                 "group": None, "shares": None, "cost_basis": None, "tv_symbol": None}]
+    row, = pipeline.build_rows(hists, None, {}, holdings, TODAY, tv=tv)[0]
+    assert row["tv_symbol"] == "NASDAQ:NVDA"
+
+
+def test_every_live_venue_symbol_maps_to_a_known_tradingview_symbol():
+    """Pins the shape against the 88 symbols enumerated from TradingView's
+    HIP3XYZ exchange: <API symbol>USDC.P, with SKHX aliased to SKHYNIX.
+    A new alias appearing upstream shows up here rather than as an empty chart.
+
+    The list is a fixture, not a live call — the suite makes no network
+    requests. Refresh it from TradingView's symbol search if the venue's
+    naming changes.
+    """
+    sample = {
+        "NVDA": "HIP3XYZ:NVDAUSDC.P", "GOLD": "HIP3XYZ:GOLDUSDC.P",
+        "CL": "HIP3XYZ:CLUSDC.P", "SP500": "HIP3XYZ:SP500USDC.P",
+        "XYZ100": "HIP3XYZ:XYZ100USDC.P", "BRENTOIL": "HIP3XYZ:BRENTOILUSDC.P",
+        "SPCX": "HIP3XYZ:SPCXUSDC.P", "DRAM": "HIP3XYZ:DRAMUSDC.P",
+        "SOFTBANK": "HIP3XYZ:SOFTBANKUSDC.P",   # the one that read "symbol doesn't exist"
+        "SKHX": "HIP3XYZ:SKHYNIXUSDC.P", "SKHY": "HIP3XYZ:SKHYUSDC.P",
+    }
+    for symbol, expected in sample.items():
+        assert pipeline.tv_symbol(symbol, None, source="hyperliquid") == expected, symbol

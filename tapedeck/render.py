@@ -268,7 +268,10 @@ def _cell(row, col, ctx):
     raise KeyError(key)
 
 
-TV_TIMEFRAMES = (("12H", "720"), ("4H", "240"), ("1H", "60"))
+# TradingView has no 12-hour interval — it accepted "720" and silently drew a
+# daily chart, so the panel was labelled 12H while showing D. Ask for the
+# interval we actually get.
+TV_TIMEFRAMES = (("D", "D"), ("4H", "240"), ("1H", "60"))
 
 _LADDER_DIRECTION = {"reclaim": "reclaimed", "reject": "rejected",
                      "support": "support", "resistance": "resistance"}

@@ -95,8 +95,13 @@ def test_page_rows_expand_to_tradingview_charts():
     assert html.count('class="detail"') == 2  # one hidden detail row per ticker
     assert 'data-symbol="NASDAQ:NVDA"' in html
     assert 'data-symbol="BW"' in html  # no tv_symbol → falls back to bare ticker
-    assert "12H" in html and "4H" in html and "1H" in html
-    assert 'data-tf="720"' in html and 'data-tf="240"' in html and 'data-tf="60"' in html
+    # The label has to name the interval TradingView actually draws: it has no
+    # 12-hour interval, so "720" silently rendered a daily chart under a 12H
+    # heading.
+    assert "D · NASDAQ:NVDA" in html and "4H · NASDAQ:NVDA" in html
+    assert "12H" not in html
+    assert 'data-tf="D"' in html and 'data-tf="240"' in html and 'data-tf="60"' in html
+    assert 'data-tf="720"' not in html
     assert "s3.tradingview.com" in html
 
 

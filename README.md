@@ -112,6 +112,10 @@ over:
   Barrick, and its `CL` is WTI crude while NYSE `CL` is Colgate-Palmolive, so
   matching on the bare symbol would be wrong in a way that fires real alerts.
 
+Charts show the perp itself: trade.xyz lists its markets on TradingView as
+`HIP3XYZ:<SYMBOL>USDC.P`, and tapedeck derives that automatically, so no
+`tv_symbol:` is needed and no delayed equity proxy stands in for the contract.
+
 `scripts/sync_tradexyz.py --write` regenerates a watchlist of every live market
 from the venue's API, and reports what has been listed or delisted since.
 

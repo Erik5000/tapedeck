@@ -60,6 +60,7 @@ def load_config(path):
             # in one list and a trade.xyz perp in another within the same run.
             "key": ticker if source == "yahoo" else hlfetch.qualify(ticker, dex),
             "source": source,
+            "dex": dex,
             # The US-listed equity a venue market tracks, if any. Fundamentals
             # are looked up under this and nowhere else: venue GOLD is bullion
             # while NYSE GOLD is Barrick, and venue CL is WTI crude while NYSE

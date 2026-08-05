@@ -8,10 +8,32 @@ SMA_WINDOWS = (20, 50, 200)
 _TV_EXCHANGE = {"NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ", "NAS": "NASDAQ",
                 "NYQ": "NYSE", "ASE": "AMEX", "PCX": "AMEX"}
 
+# HIP-3 dex → TradingView exchange prefix. Only xyz is mapped because only xyz
+# has been verified to exist there; an unmapped dex falls through to the bare
+# ticker rather than inventing a prefix that would render "symbol doesn't exist".
+_TV_HIP3 = {"xyz": "HIP3XYZ"}
 
-def tv_symbol(ticker, exchange, override=None):
+# The venue's perp contracts are listed on TradingView as <SYMBOL>USDC.P, which
+# is exactly the API symbol for 87 of the 88 live markets. SKHX is the one
+# exception — TradingView follows trade.xyz's docs naming (SKHYNIX) where the
+# API uses SKHX, the same split that already affects SMSN/SAMSUNG and CL/WTIOIL.
+_TV_HIP3_ALIAS = {"SKHX": "SKHYNIX"}
+
+
+def tv_symbol(ticker, exchange, override=None, source="yahoo", dex="xyz"):
+    """The TradingView symbol for a row's chart panel.
+
+    A venue holding charts the perp it actually trades, not a spot proxy — the
+    bare ticker resolved to nothing (SOFTBANK), and the equity proxies that did
+    resolve were delayed feeds of a different instrument.
+    """
     if override:
         return override
+    if source == "hyperliquid":
+        prefix = _TV_HIP3.get(dex or "")
+        if prefix:
+            return f"{prefix}:{_TV_HIP3_ALIAS.get(ticker, ticker)}USDC.P"
+        return ticker
     prefix = _TV_EXCHANGE.get(exchange or "")
     return f"{prefix}:{ticker}" if prefix else ticker
 
@@ -26,7 +48,10 @@ def _empty_row(holding, info):
         "ps": info.get("ps"),
         "pe": info.get("pe"),
         "earnings_date": info.get("earnings_date"),
-        "tv_symbol": tv_symbol(holding["ticker"], info.get("exchange"), holding.get("tv_symbol")),
+        "tv_symbol": tv_symbol(holding["ticker"], info.get("exchange"),
+                               holding.get("tv_symbol"),
+                               source=holding.get("source") or "yahoo",
+                               dex=holding.get("dex") or "xyz"),
         "price": None, "pct_1d": None, "pct_ytd": None, "pct_1y": None,
         "spark": [], "pct_off_high": None, "new_52w": None,
         "rs_1m": None, "rs_3m": None, "rs_bars": [], "rs_rank": None,
@@ -39,9 +64,11 @@ def _empty_row(holding, info):
 # snapshot fields the TradingView screener may override (history-derived
 # series — spark, RS, SMA state, gaps — always stay history-based)
 _TV_PRICE_KEYS = ("price", "pct_1d", "pct_ytd", "pct_off_high", "atr_pct", "rel_vol")
-_TV_FUNDAMENTAL_KEYS = ("name", "sector", "market_cap", "pe", "ps", "earnings_date",
-                        "tv_symbol")
-_TV_OVERRIDE_KEYS = _TV_PRICE_KEYS + _TV_FUNDAMENTAL_KEYS
+_TV_FUNDAMENTAL_KEYS = ("name", "sector", "market_cap", "pe", "ps", "earnings_date")
+# tv_symbol is deliberately outside the fundamentals: the screener returns the
+# equity's symbol, which on a venue row would replace the perp's chart with a
+# delayed spot chart of a different instrument.
+_TV_OVERRIDE_KEYS = _TV_PRICE_KEYS + _TV_FUNDAMENTAL_KEYS + ("tv_symbol",)
 
 
 def build_rows(hists, bench_close, infos, holdings, today, tv=None):

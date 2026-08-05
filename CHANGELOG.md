@@ -48,8 +48,19 @@
   `output/watchlist-backups/` first, which is what makes the unavoidable loss
   of yaml comments recoverable rather than final. Writes return 409 while a
   fetch is running, since that run is reading the same files.
+- **Venue rows chart the perp they actually trade.** trade.xyz lists its markets
+  on TradingView as `HIP3XYZ:<SYMBOL>USDC.P`, derived automatically — the bare
+  ticker resolved to nothing at all (`SOFTBANK` → "this symbol doesn't exist"),
+  and the equity proxies that did resolve were delayed feeds of a different
+  instrument. `tv_symbol` is now excluded from the screener's overrides for
+  venue rows, since the screener returns the equity's symbol. All 88 live
+  markets are `<API symbol>USDC.P`, except `SKHX` → `SKHYNIX` — the same
+  docs/API naming split that affects `SMSN` and `CL`.
+- **Chart panels are labelled `D`, not `12H`.** TradingView has no 12-hour
+  interval: it accepted `"720"` and silently drew a daily chart under a 12H
+  heading.
 - The footer no longer carries the `inspired by @speculator_io` credit.
-- 251 → 365 tests.
+- 251 → 373 tests.
 
 ## 2026-08-04 — TAPEDECK.app: a real macOS app
 
