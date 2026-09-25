@@ -8,6 +8,7 @@ __pycache__/
 # personal data — never committed
 watchlists/
 output/
+book/
 
 # reference material (not ours to redistribute)
 input/
