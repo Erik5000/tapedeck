@@ -1,6 +1,7 @@
 """Every test stubs ``sources._get`` (FRED) and ``hlfetch._post`` (venue).
 tests/conftest.py blocks both by default, so a missed stub fails loudly."""
 
+import urllib.error
 from datetime import date
 
 import pytest
@@ -121,3 +122,120 @@ def test_fetch_all_with_the_network_blocked_returns_empty_and_never_raises():
     out = sources.fetch_all(TODAY, now_ms=NOW_MS)
     assert out["fred"] == {} and out["closes"] == {} and out["ctx"] == {} and out["funding"] == {}
     assert len(out["errors"]) > 0
+
+
+# ---------- 429 retry ----------
+
+def _http(code):
+    return urllib.error.HTTPError("https://x", code, "err", hdrs=None, fp=None)
+
+
+@pytest.fixture
+def waits(monkeypatch):
+    seen = []
+    monkeypatch.setattr(sources, "_sleep", seen.append)
+    return seen
+
+
+def test_venue_post_retries_once_after_a_429(monkeypatch, waits):
+    answers = [_http(429), "ok"]
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    assert sources._venue_post({"type": "x"}) == "ok"
+    assert waits == [1]
+
+
+def test_venue_post_gives_up_after_five_attempts(monkeypatch, waits):
+    calls = []
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        calls.append(body)
+        raise _http(429)
+
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    with pytest.raises(urllib.error.HTTPError) as err:
+        sources._venue_post({"type": "x"})
+    assert err.value.code == 429
+    assert len(calls) == 5 and waits == [1, 2, 4, 8]
+
+
+@pytest.mark.parametrize("exc", [_http(500), TimeoutError("slow")], ids=["http500", "timeout"])
+def test_venue_post_raises_other_errors_at_once(monkeypatch, waits, exc):
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        raise exc
+
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    with pytest.raises(type(exc)):
+        sources._venue_post({"type": "x"})
+    assert waits == []
+
+
+def _candle_stub(limited_once=(), limited_always=()):
+    candle = [{"t": 1790726400000, "o": "1", "h": "1", "l": "1", "c": "5.3", "v": "1"}]
+    hits = {}
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        coin = body["req"]["coin"]
+        hits[coin] = hits.get(coin, 0) + 1
+        if coin in limited_always or (coin in limited_once and hits[coin] == 1):
+            raise _http(429)
+        return candle
+    return fake_post
+
+
+def test_fetch_venue_closes_survives_one_429(monkeypatch, waits):
+    monkeypatch.setattr(hlfetch, "_post", _candle_stub(limited_once={"para:2Y"}))
+    closes = sources.fetch_venue_closes(["para:2Y", "para:10Y"])
+    assert set(closes) == {"para:2Y", "para:10Y"}
+    assert closes["para:2Y"].iloc[-1] == 5.3
+
+
+def test_fetch_venue_closes_drops_only_the_market_that_stays_limited(monkeypatch, waits):
+    monkeypatch.setattr(hlfetch, "_post", _candle_stub(limited_always={"xyz:CL"}))
+    errors = {}
+    closes = sources.fetch_venue_closes(["para:2Y", "xyz:CL", "mkts:USBOND"], errors=errors)
+    assert set(closes) == {"para:2Y", "mkts:USBOND"}
+    assert "rate limited" in errors["xyz:CL candles"]
+
+
+def test_venue_calls_never_overlap(monkeypatch, waits):
+    import threading
+    import time
+    active, peak, lock = [0], [0], threading.Lock()
+    inner = _venue_stub()
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.002)
+        with lock:
+            active[0] -= 1
+        return inner(body, timeout)
+
+    monkeypatch.setattr(sources, "_get", lambda url, timeout=30: "DATE,X\n2026-09-30,1\n")
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    sources.fetch_all(TODAY, now_ms=NOW_MS)
+    assert peak[0] == 1
+
+
+def test_fetch_all_reports_a_rate_limited_market(monkeypatch, waits):
+    inner = _venue_stub()
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        if body.get("coin") == "xyz:CL" or body.get("req", {}).get("coin") == "xyz:CL":
+            raise _http(429)
+        return inner(body, timeout)
+
+    monkeypatch.setattr(sources, "_get", lambda url, timeout=30: "DATE,X\n2026-09-30,1\n")
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS)
+    assert "rate limited" in out["errors"]["xyz:CL candles"]
+    assert "rate limited" in out["errors"]["xyz:CL funding"]
+    assert "xyz:CL" not in out["closes"]

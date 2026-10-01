@@ -6,10 +6,13 @@ alone: a failed series is absent from the result and its reason is in
 
 No API key, nothing to sign up for. FRED's ``fredgraph.csv`` is the Fed's
 public file. The venue is the same endpoint ``hlfetch`` already uses, and the
-calls go through ``hlfetch._post`` so one stub covers both in tests.
+calls go through ``hlfetch._post`` so one stub covers both in tests. Venue
+calls run one at a time and retry on HTTP 429 with a growing wait.
 """
 
 import sys
+import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -31,11 +34,34 @@ FUNDING_DAYS = 180
 FUNDING_PAGE = 500      # the venue returns at most this many rows per call
 FUNDING_MAX_PAGES = 20
 TIMEOUT = 30
+RETRY_DELAYS = (1, 2, 4, 8)   # seconds to wait after each HTTP 429
 
 
 def _get(url, timeout=TIMEOUT):
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
+
+
+_sleep = time.sleep     # tests replace it so no test waits
+
+
+def _venue_post(body):
+    """``hlfetch._post`` that waits and retries on HTTP 429. The venue refuses
+    bursts for a moment, so a 429 is transient. Any other error raises at once."""
+    for delay in RETRY_DELAYS:
+        try:
+            return hlfetch._post(body)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429:
+                raise
+        _sleep(delay)
+    return hlfetch._post(body)
+
+
+def _reason(exc):
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+        return "rate limited (HTTP 429)"
+    return str(exc) or type(exc).__name__
 
 
 def _by_dex(markets):
@@ -76,13 +102,25 @@ def fetch_fred(series_id, today):
 
 # ---------- venue ----------
 
-def fetch_venue_closes(markets):
-    """{qualified market: daily Close Series}. A market that fails is absent —
-    ``hlfetch.fetch_history`` already degrades per market."""
+def fetch_venue_closes(markets, errors=None, now_ms=None):
+    """{qualified market: daily Close Series}, fetched one market at a time.
+    A market that fails or has no bars is absent; its reason goes into
+    ``errors`` when given. One market never drops another."""
+    end_ms = int(pd.Timestamp.utcnow().timestamp() * 1000) if now_ms is None else int(now_ms)
+    start_ms = end_ms - hlfetch.HISTORY_DAYS * 86_400_000
     closes = {}
-    for dex, tickers in _by_dex(markets).items():
-        for key, frame in hlfetch.fetch_history(tickers, dex=dex).items():
-            closes[key] = frame["Close"]
+    for market in markets:
+        try:
+            frame = hlfetch._candles_to_frame(_venue_post(
+                {"type": "candleSnapshot",
+                 "req": {"coin": market, "interval": "1d",
+                         "startTime": start_ms, "endTime": end_ms}}))
+        except Exception as exc:
+            if errors is not None:
+                errors[f"{market} candles"] = _reason(exc)
+            continue
+        if frame is not None:
+            closes[market] = frame["Close"]
     return closes
 
 
@@ -108,7 +146,7 @@ def parse_contexts(resp, wanted):
 
 
 def fetch_contexts(dex, wanted):
-    return parse_contexts(hlfetch._post({"type": "metaAndAssetCtxs", "dex": dex}), wanted)
+    return parse_contexts(_venue_post({"type": "metaAndAssetCtxs", "dex": dex}), wanted)
 
 
 def parse_funding(rows):
@@ -135,7 +173,7 @@ def fetch_funding(market, now_ms, days=FUNDING_DAYS):
     start = now_ms - days * 86_400_000
     rows = []
     for _ in range(FUNDING_MAX_PAGES):
-        batch = hlfetch._post({"type": "fundingHistory", "coin": market, "startTime": start})
+        batch = _venue_post({"type": "fundingHistory", "coin": market, "startTime": start})
         if not batch:
             break
         rows.extend(batch)
@@ -163,42 +201,39 @@ def fetch_all(today, now_ms=None):
             s = fetch_fred(sid, today)
             return sid, s, None if s is not None else "empty or unreadable CSV"
         except Exception as exc:
-            return sid, None, str(exc) or type(exc).__name__
+            return sid, None, _reason(exc)
 
-    def funding_one(market):
-        try:
-            s = fetch_funding(market, now_ms)
-            return market, s, None if s is not None else "no funding rows"
-        except Exception as exc:
-            return market, None, str(exc) or type(exc).__name__
-
+    # FRED runs in a pool while the venue calls run in order in this thread.
     with ThreadPoolExecutor(max_workers=8) as pool:
-        fred_results = list(pool.map(fred_one, FRED_IDS))
-        funding_results = list(pool.map(funding_one, FUNDING_MARKETS))
-    for sid, s, err in fred_results:
-        if s is not None:
-            out["fred"][sid] = s
-        else:
-            out["errors"][f"FRED {sid}"] = err
-    for market, s, err in funding_results:
-        if s is not None:
-            out["funding"][market] = s
-        else:
-            out["errors"][f"{market} funding"] = err
+        fred_future = pool.map(fred_one, FRED_IDS)
 
-    try:
-        out["closes"] = fetch_venue_closes(VENUE_MARKETS)
-    except Exception as exc:
-        out["errors"]["venue candles"] = str(exc) or type(exc).__name__
-    for market in VENUE_MARKETS:
-        if market not in out["closes"]:
-            out["errors"].setdefault(f"{market} candles", "no candles")
+        out["closes"] = fetch_venue_closes(VENUE_MARKETS, errors=out["errors"], now_ms=now_ms)
+        for market in VENUE_MARKETS:
+            if market not in out["closes"]:
+                out["errors"].setdefault(f"{market} candles", "no candles")
 
-    for dex in _by_dex(VENUE_MARKETS):
-        try:
-            out["ctx"].update(fetch_contexts(dex, set(VENUE_MARKETS)))
-        except Exception as exc:
-            out["errors"][f"{dex} context"] = str(exc) or type(exc).__name__
+        for dex in _by_dex(VENUE_MARKETS):
+            try:
+                out["ctx"].update(fetch_contexts(dex, set(VENUE_MARKETS)))
+            except Exception as exc:
+                out["errors"][f"{dex} context"] = _reason(exc)
+
+        for market in FUNDING_MARKETS:
+            try:
+                s = fetch_funding(market, now_ms)
+            except Exception as exc:
+                out["errors"][f"{market} funding"] = _reason(exc)
+                continue
+            if s is not None:
+                out["funding"][market] = s
+            else:
+                out["errors"][f"{market} funding"] = "no funding rows"
+
+        for sid, s, err in fred_future:
+            if s is not None:
+                out["fred"][sid] = s
+            else:
+                out["errors"][f"FRED {sid}"] = err
 
     for source, reason in out["errors"].items():
         print(f"warning: situation · {source}: {reason}", file=sys.stderr)
