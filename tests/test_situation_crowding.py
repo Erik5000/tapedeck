@@ -66,7 +66,32 @@ def test_unreadable_line_is_skipped_with_a_warning(tmp_path, capsys):
     assert [r["date"] for r in hist] == ["2026-09-30"]
     assert "line 2 unreadable" in capsys.readouterr().err
     crowding.update_history(path, TODAY, {"para:10Y": 110.0})
+    capsys.readouterr()     # the update reads the bad line one last time
+    assert len(path.read_text().splitlines()) == 2
     assert len(crowding.load_history(path)) == 2
+    assert capsys.readouterr().err == ""
+
+
+def test_a_partial_second_run_keeps_the_first_runs_values(tmp_path):
+    path = tmp_path / "situation-history.jsonl"
+    crowding.update_history(path, TODAY, {"para:10Y": 100.0, "xyz:CL": 50.0})
+    hist = crowding.update_history(path, TODAY, {"para:10Y": 120.0})
+    assert hist == [{"date": "2026-10-01", "oi": {"para:10Y": 120.0, "xyz:CL": 50.0}}]
+    assert crowding.load_history(path) == hist
+
+
+def test_an_empty_second_run_keeps_todays_line(tmp_path):
+    path = tmp_path / "situation-history.jsonl"
+    crowding.update_history(path, TODAY, {"para:10Y": 100.0})
+    hist = crowding.update_history(path, TODAY, {})
+    assert hist == [{"date": "2026-10-01", "oi": {"para:10Y": 100.0}}]
+    assert crowding.load_history(path) == hist
+
+
+def test_update_history_leaves_no_temp_file(tmp_path):
+    path = tmp_path / "situation-history.jsonl"
+    crowding.update_history(path, TODAY, {"para:10Y": 100.0})
+    assert [f.name for f in tmp_path.iterdir()] == ["situation-history.jsonl"]
 
 
 def history(pairs):

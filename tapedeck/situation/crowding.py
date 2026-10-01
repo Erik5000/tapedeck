@@ -2,12 +2,14 @@
 
 Pure except for the history file. The venue publishes funding history but no
 OI history, so each run stores today's OI, one line per day, in
-output/situation-history.jsonl. A second run on the same day replaces that
+output/situation-history.jsonl. A second run on the same day updates that
 day's line, so "20 days" always means 20 days.
 """
 
 import json
+import os
 import sys
+import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -82,18 +84,38 @@ def load_history(path):
 
 
 def update_history(path, today, oi_by_market):
-    """Write today's OI (replacing any line for today) and return the history.
-    No OI today (venue down) writes no line for today."""
+    """Merge today's OI into today's line and return the history.
+
+    A market in the new OI overwrites today's saved value; a market missing
+    from it keeps the saved value. The venue keeps no OI history, so a later
+    run with less OI (one dex failed, or the venue is down) never erases a
+    saved value. The file is written to a temp file, then replaced.
+    """
     stamp = today.isoformat()
-    hist = [r for r in load_history(path) if r["date"] != stamp]
+    hist = load_history(path)
     oi = {m: float(v) for m, v in (oi_by_market or {}).items() if stats.finite(v) is not None}
     if oi:
-        hist.append({"date": stamp, "oi": oi})
+        saved = next((r["oi"] for r in hist if r["date"] == stamp), {})
+        hist = [r for r in hist if r["date"] != stamp]
+        hist.append({"date": stamp, "oi": {**saved, **oi}})
         hist.sort(key=lambda r: r["date"])
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in hist))
+    write_atomic(p, "".join(json.dumps(r, sort_keys=True) + "\n" for r in hist))
     return hist
+
+
+def write_atomic(path, text):
+    """Write ``text`` to a temp file in the same folder, then replace ``path``.
+    A run stopped mid-write leaves the old file whole."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def oi_change(history, market, today, days=OI_DAYS):
