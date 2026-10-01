@@ -8,6 +8,10 @@ No API key, nothing to sign up for. FRED's ``fredgraph.csv`` is the Fed's
 public file. The venue is the same endpoint ``hlfetch`` already uses, and the
 calls go through ``hlfetch._post`` so one stub covers both in tests. Venue
 calls run one at a time and retry on HTTP 429 with a growing wait.
+
+Funding history is cached per market in ``<cache_dir>/<market>.csv``
+(``:`` becomes ``_``), so a run fetches only the rows after the last cached
+one. Without a cache folder every run fetches all ``FUNDING_DAYS`` days.
 """
 
 import sys
@@ -17,10 +21,13 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from io import StringIO
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .. import hlfetch
+from .crowding import write_atomic
 from .stats import finite
 
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}&cosd={start}"
@@ -167,10 +174,11 @@ def parse_funding(rows):
     return s[~s.index.duplicated(keep="last")]
 
 
-def fetch_funding(market, now_ms, days=FUNDING_DAYS):
-    """Hourly funding for ``days`` days. The venue pages at 500 rows, so the
-    next page starts one millisecond after the last row of the previous one."""
-    start = now_ms - days * 86_400_000
+def fetch_funding(market, now_ms, days=FUNDING_DAYS, start_ms=None):
+    """Hourly funding for ``days`` days, or from ``start_ms`` when given. The
+    venue pages at 500 rows, so the next page starts one millisecond after the
+    last row of the previous one."""
+    start = now_ms - days * 86_400_000 if start_ms is None else start_ms
     rows = []
     for _ in range(FUNDING_MAX_PAGES):
         batch = _venue_post({"type": "fundingHistory", "coin": market, "startTime": start})
@@ -183,10 +191,82 @@ def fetch_funding(market, now_ms, days=FUNDING_DAYS):
     return parse_funding(rows)
 
 
+def _to_ms(ts):
+    return int(ts.value // 1_000_000)
+
+
+def funding_cache_path(cache_dir, market):
+    return Path(cache_dir) / (market.replace(":", "_") + ".csv")
+
+
+def read_funding_cache(path):
+    """The cached hourly funding Series, or None. A missing file is None; an
+    unreadable one is None with a warning, and the next write rebuilds it."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        frame = pd.read_csv(p, dtype={"time_ms": "int64", "rate": "float64"},
+                            float_precision="round_trip")
+        if list(frame.columns) != ["time_ms", "rate"] or not len(frame):
+            raise ValueError("not a funding cache")
+        if not np.isfinite(frame["rate"].values).all():
+            raise ValueError("non-finite rate")
+    except Exception:
+        print(f"warning: situation · {p.name} unreadable — rebuilt", file=sys.stderr)
+        return None
+    idx = pd.to_datetime(frame["time_ms"].values, unit="ms")
+    s = pd.Series(frame["rate"].values, index=idx).sort_index()
+    return s[~s.index.duplicated(keep="last")]
+
+
+def write_funding_cache(path, s):
+    lines = "".join(f"{t},{float(r)!r}\n" for t, r in zip(s.index.asi8 // 1_000_000, s.values))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(Path(path), "time_ms,rate\n" + lines)
+
+
+def fetch_funding_cached(market, now_ms, cache_dir, errors):
+    """Cached funding plus the rows after it, trimmed to ``FUNDING_DAYS``.
+
+    A failed fetch returns the cached Series (the reason still goes into
+    ``errors``); with no cache the market is absent (None).
+    """
+    cutoff = now_ms - FUNDING_DAYS * 86_400_000
+    path = funding_cache_path(cache_dir, market) if cache_dir is not None else None
+    cached = read_funding_cache(path) if path is not None else None
+    start = None if cached is None else max(_to_ms(cached.index[-1]) + 1, cutoff)
+    try:
+        new = fetch_funding(market, now_ms, start_ms=start)
+    except Exception as exc:
+        errors[f"{market} funding"] = _reason(exc)
+        new, failed = None, True
+    else:
+        failed = False
+    parts = [x for x in (cached, new) if x is not None]
+    if not parts:
+        if not failed:
+            errors[f"{market} funding"] = "no funding rows"
+        return None
+    s = pd.concat(parts).sort_index()
+    s = s[~s.index.duplicated(keep="last")]
+    s = s[s.index >= pd.to_datetime(cutoff, unit="ms")]
+    if not len(s):
+        errors.setdefault(f"{market} funding", "no funding rows")
+        return None
+    if path is not None and not failed:
+        try:
+            write_funding_cache(path, s)
+        except OSError as exc:
+            print(f"warning: situation · {path.name} not saved ({exc})", file=sys.stderr)
+    return s
+
+
 # ---------- everything ----------
 
-def fetch_all(today, now_ms=None):
-    """Every input the tab needs. Never raises.
+def fetch_all(today, now_ms=None, cache_dir=None):
+    """Every input the tab needs. Never raises. ``cache_dir`` holds the
+    funding cache; without it funding is fetched in full and not saved.
 
     Returns {"fred": {id: Series}, "closes": {market: Series},
              "ctx": {market: dict}, "funding": {market: Series},
@@ -219,15 +299,9 @@ def fetch_all(today, now_ms=None):
                 out["errors"][f"{dex} context"] = _reason(exc)
 
         for market in FUNDING_MARKETS:
-            try:
-                s = fetch_funding(market, now_ms)
-            except Exception as exc:
-                out["errors"][f"{market} funding"] = _reason(exc)
-                continue
+            s = fetch_funding_cached(market, now_ms, cache_dir, out["errors"])
             if s is not None:
                 out["funding"][market] = s
-            else:
-                out["errors"][f"{market} funding"] = "no funding rows"
 
         for sid, s, err in fred_future:
             if s is not None:

@@ -14,6 +14,7 @@ from . import alerts, confidence, crowding, legs, oillink, regime, series, sourc
 SCHEMA = 1
 FEED_NAME = "situation-latest.json"
 HISTORY_NAME = "situation-history.jsonl"
+FUNDING_CACHE_NAME = "situation-funding"
 
 
 def _last_date(frames):
@@ -23,8 +24,12 @@ def _last_date(frames):
 
 def build_situation(today, out_dir, fetch=None):
     """Fetch, compute and return the tab's dict. ``fetch`` replaces
-    ``sources.fetch_all`` in tests. Writes only the OI history file."""
-    src = (fetch or sources.fetch_all)(today)
+    ``sources.fetch_all`` in tests. Writes only the OI history file and the
+    funding cache folder."""
+    if fetch is None:
+        src = sources.fetch_all(today, cache_dir=Path(out_dir) / FUNDING_CACHE_NAME)
+    else:
+        src = fetch(today)
     prep = series.prepare(src)
     rate_legs = legs.build_rates_legs(prep, src, today)
     oil_legs = oillink.build_oil_legs(prep, src, today)

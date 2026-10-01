@@ -84,3 +84,16 @@ def test_feed_round_trips_a_real_build(tmp_path):
     ([{"status": "stale"}], 50)])
 def test_panel_confidence(items, expected):
     assert confidence.panel_confidence(items) == expected
+
+
+def test_build_situation_passes_the_funding_cache_folder(tmp_path, monkeypatch):
+    from tapedeck.situation import sources
+    seen = {}
+
+    def fake_fetch_all(today, **kwargs):
+        seen.update(kwargs)
+        return full_src()
+
+    monkeypatch.setattr(sources, "fetch_all", fake_fetch_all)
+    situation.build_situation(TODAY, tmp_path)
+    assert seen == {"cache_dir": tmp_path / "situation-funding"}

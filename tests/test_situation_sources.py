@@ -239,3 +239,111 @@ def test_fetch_all_reports_a_rate_limited_market(monkeypatch, waits):
     assert "rate limited" in out["errors"]["xyz:CL candles"]
     assert "rate limited" in out["errors"]["xyz:CL funding"]
     assert "xyz:CL" not in out["closes"]
+
+
+# ---------- funding cache ----------
+
+HOUR = 3_600_000
+DAY = 86_400_000
+
+
+def _funding_stub(now_ms, seen, fail=False):
+    """The venue stub, with hourly funding rows from ``startTime`` up to ``now_ms``."""
+    inner = _venue_stub()
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        if body["type"] != "fundingHistory":
+            return inner(body, timeout)
+        seen.append((body["coin"], body["startTime"]))
+        if fail:
+            raise TimeoutError("venue timeout")
+        first = -(-body["startTime"] // HOUR) * HOUR
+        times = range(first, now_ms + 1, HOUR)[:sources.FUNDING_PAGE]
+        return [{"time": t, "fundingRate": "0.00001"} for t in times]
+    return fake_post
+
+
+def _write_cache(path, times, rate=0.00002):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("time_ms,rate\n" + "".join(f"{t},{rate!r}\n" for t in times))
+
+
+def _ms(ts):
+    return int(ts.value // 1_000_000)
+
+
+def test_first_run_writes_the_funding_cache(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, seen))
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=tmp_path)
+    assert ("xyz:CL", NOW_MS - sources.FUNDING_DAYS * DAY) in seen
+    cache = tmp_path / "xyz_CL.csv"
+    assert cache.read_text().splitlines()[0] == "time_ms,rate"
+    cached = sources.read_funding_cache(cache)
+    assert cached.equals(out["funding"]["xyz:CL"])
+    assert len(cached) == sources.FUNDING_DAYS * 24
+    assert sorted(f.name for f in tmp_path.iterdir()) == sorted(
+        m.replace(":", "_") + ".csv" for m in sources.FUNDING_MARKETS)
+
+
+def test_second_run_asks_only_for_rows_after_the_last_cached_time(monkeypatch, tmp_path):
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, []))
+    first = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=tmp_path)["funding"]["para:10Y"]
+    later, seen = NOW_MS + 3 * HOUR, []
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(later, seen))
+    second = sources.fetch_all(TODAY, now_ms=later, cache_dir=tmp_path)["funding"]["para:10Y"]
+    assert ("para:10Y", _ms(first.index[-1]) + 1) in seen
+    assert len([s for s in seen if s[0] == "para:10Y"]) == 1
+    assert second.index[-1] > first.index[-1]
+    assert sources.read_funding_cache(tmp_path / "para_10Y.csv").equals(second)
+
+
+def test_the_cache_is_trimmed_to_funding_days(monkeypatch, tmp_path):
+    old = [NOW_MS - 200 * DAY + i * HOUR for i in range(200 * 24)]
+    _write_cache(tmp_path / "xyz_TLT.csv", old)
+    seen = []
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, seen))
+    s = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=tmp_path)["funding"]["xyz:TLT"]
+    cutoff = NOW_MS - sources.FUNDING_DAYS * DAY
+    assert _ms(s.index[0]) >= cutoff and _ms(s.index[-1]) <= NOW_MS
+    assert _ms(sources.read_funding_cache(tmp_path / "xyz_TLT.csv").index[0]) >= cutoff
+    assert ("xyz:TLT", old[-1] + 1) in seen
+
+
+def test_a_failed_fetch_falls_back_to_the_cache_and_records_the_error(monkeypatch, tmp_path):
+    times = [NOW_MS - DAY + i * HOUR for i in range(24)]
+    _write_cache(tmp_path / "xyz_CL.csv", times)
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, [], fail=True))
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=tmp_path)
+    assert len(out["funding"]["xyz:CL"]) == 24
+    assert out["funding"]["xyz:CL"].iloc[-1] == 0.00002
+    assert out["errors"]["xyz:CL funding"] == "venue timeout"
+    assert "para:10Y" not in out["funding"]          # no cache, failed fetch: absent
+
+
+def test_an_unreadable_cache_is_rebuilt(monkeypatch, tmp_path, capsys):
+    (tmp_path / "xyz_CL.csv").write_text("time_ms,rate\n12,abc\nnot,a,cache\n")
+    seen = []
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, seen))
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=tmp_path)
+    assert "xyz_CL.csv unreadable" in capsys.readouterr().err
+    assert ("xyz:CL", NOW_MS - sources.FUNDING_DAYS * DAY) in seen
+    assert sources.read_funding_cache(tmp_path / "xyz_CL.csv").equals(out["funding"]["xyz:CL"])
+
+
+def test_fetch_all_without_a_cache_dir_writes_nothing(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, []))
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS)
+    assert len(out["funding"]["xyz:CL"]) == sources.FUNDING_DAYS * 24
+    assert list(tmp_path.iterdir()) == []
+
+
+
+def test_a_cache_that_cannot_be_written_is_a_warning(monkeypatch, tmp_path, capsys):
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("")
+    monkeypatch.setattr(hlfetch, "_post", _funding_stub(NOW_MS, []))
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=blocker)
+    assert len(out["funding"]["xyz:CL"]) == sources.FUNDING_DAYS * 24
+    assert "xyz_CL.csv not saved" in capsys.readouterr().err
