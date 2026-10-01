@@ -276,3 +276,68 @@ def test_serve_port_defaults_to_the_shared_constant():
     from tapedeck.server import DEFAULT_PORT
     assert DEFAULT_PORT == 7360
 
+
+
+# ---------- Situation tab ----------
+#
+# tests/conftest.py blocks the network, so build_situation runs on empty
+# sources here: every leg is "no data", and the run must still complete.
+
+def _one_list(tmp_path):
+    wl_dir = tmp_path / "watchlists"
+    wl_dir.mkdir()
+    (wl_dir / "book.yaml").write_text("holdings:\n  - ticker: NVDA\n")
+    (tmp_path / "output").mkdir()
+
+
+def _page(tmp_path):
+    [page] = (tmp_path / "output").glob("tapedeck-*.html")
+    return page.read_text()
+
+
+def test_default_run_adds_the_situation_tab_and_feed(tmp_path, monkeypatch):
+    _stub_no_network(monkeypatch)
+    _one_list(tmp_path)
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["tapedeck.py", "--no-open", "--source", "yahoo"])
+
+    cli.main()
+
+    assert 'data-wl="_situation"' in _page(tmp_path)
+    feed = json.loads((tmp_path / "output" / "situation-latest.json").read_text())
+    assert feed["schema"] == 1 and feed["errors"]
+
+
+def test_no_situation_flag_skips_the_tab(tmp_path, monkeypatch):
+    _stub_no_network(monkeypatch)
+    _one_list(tmp_path)
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv",
+                        ["tapedeck.py", "--no-open", "--source", "yahoo", "--no-situation"])
+
+    cli.main()
+
+    assert "_situation" not in _page(tmp_path)
+    assert not (tmp_path / "output" / "situation-latest.json").exists()
+
+
+def test_a_situation_crash_costs_the_tab_not_the_page(tmp_path, monkeypatch, capsys):
+    from tapedeck import situation
+
+    _stub_no_network(monkeypatch)
+    _one_list(tmp_path)
+
+    def boom(today, out_dir, fetch=None):
+        raise ValueError("bad input")
+
+    monkeypatch.setattr(situation, "build_situation", boom)
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["tapedeck.py", "--no-open", "--source", "yahoo"])
+
+    cli.main()
+
+    assert "_situation" not in _page(tmp_path)
+    assert "situation tab failed (bad input)" in capsys.readouterr().err

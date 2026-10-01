@@ -1,5 +1,26 @@
 # TAPEDECK Changelog
 
+## 2026-10-01 — Situation tab: bonds and oil
+
+- **A Situation tab, first on the page.** It reads rates and oil with the
+  oil-tracker method: legs with a stated direction, z-scores over 252 days, a
+  separate confidence number, and "warming up" or "no data" instead of a fake
+  value.
+- **trade.xyz and FRED only.** Live prices, funding and open interest come
+  from the venue (`para:2Y/10Y/30Y`, `mkts:USBOND`, `xyz:TLT`,
+  `xyz:BRENTOIL`, `xyz:CL`). FRED's public CSV gives breakevens, the real
+  yield, the term premium, the HY spread and older history. Yields join FRED
+  on levels only within 5 bp. Brent joins on returns, because the perp is a
+  futures price and FRED Brent is spot.
+- **Four alerts:** Bonds ignore oil, Inflation scare without oil, Leveraged oil
+  rally, Crowded duration. An alert without its inputs shows as disabled, with
+  the reason. It never fires on part of its inputs.
+- **New files:** `output/situation-latest.json` (`schema: 1`) and
+  `output/situation-history.jsonl` (OI, one line per day).
+- **`--no-situation`** skips the tab. A failure in the tab never stops the run.
+- **Tests no longer reach the network.** `tests/conftest.py` blocks
+  `hlfetch._post` and the FRED fetch for every test.
+
 ## 2026-08-05 — page layout, alert grouping, trade.xyz, watchlist editor
 
 - **The page uses its width.** Cockpit and Baskets tile into a CSS grid instead

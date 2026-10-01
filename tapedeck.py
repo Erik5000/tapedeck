@@ -84,6 +84,8 @@ def main():
                              "Refresh button (this is what TAPEDECK.app runs)")
     parser.add_argument("--port", type=int, default=None,
                         help=f"port for --serve (default {DEFAULT_PORT})")
+    parser.add_argument("--no-situation", action="store_true",
+                        help="skip the Situation tab (bonds and oil from trade.xyz + FRED)")
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore")  # urllib3/LibreSSL noise on macOS system Python
@@ -253,9 +255,23 @@ def main():
                   file=sys.stderr)
         rendered["baskets"] = baskets
 
+    # The Situation tab never stops the run: a failure costs the tab, not the page.
+    situation_obj = None
+    if not args.no_situation:
+        from tapedeck import situation
+        print("TAPEDECK · building situation (trade.xyz + FRED) …", file=sys.stderr)
+        try:
+            situation_obj = situation.build_situation(today, out_dir)
+            print(f"wrote {situation.write_feed(situation_obj, out_dir)}", file=sys.stderr)
+        except Exception as exc:
+            situation_obj = None
+            print(f"warning: situation tab failed ({exc}) — page renders without it",
+                  file=sys.stderr)
+
     data_date = max((h.index[-1].date() for h in hists.values()), default=None)
     html = render.render_multi(rendered_lists, today,
-                               data_date=data_date.isoformat() if data_date else None)
+                               data_date=data_date.isoformat() if data_date else None,
+                               situation=situation_obj)
     out_path = out_dir / f"tapedeck-{today.isoformat()}.html"
     out_path.write_text(html)
     print(f"wrote {out_path}", file=sys.stderr)

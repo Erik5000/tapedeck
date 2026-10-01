@@ -53,6 +53,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # every run also writes the same feed to output/tapedeck-latest.json (stable path)
 .venv/bin/python3 tapedeck.py --no-open       # don't open the browser
 .venv/bin/python3 tapedeck.py --serve         # serve the last run at :7360 with Refresh buttons
+.venv/bin/python3 tapedeck.py --no-situation  # skip the Situation tab (bonds + oil)
 ```
 
 The first run seeds `watchlists/` from `examples/` (the public Situational
@@ -149,6 +150,35 @@ not bullion, and NYSE `CL` is Colgate-Palmolive, not WTI crude.
 
 `scripts/sync_tradexyz.py --write` regenerates a watchlist of every live market
 from the venue's API, and reports what has been listed or delisted since.
+
+## Situation tab
+
+The first tab reads bonds and oil together. It answers four questions: which
+regime rates are in, whether bonds price the oil move, whether an oil rally
+runs on leveraged perp longs, and whether one side of duration is crowded.
+
+- **Sources.** trade.xyz for every market it lists: the 2Y, 10Y and 30Y yield
+  perps, USBOND, TLT, Brent and WTI, with their funding and open interest.
+  FRED's public CSV for what no venue lists (breakevens, the real yield, the
+  term premium, the high-yield spread) and for older history. No Yahoo, no key.
+- **Legs.** Each row shows the value, the 20-day change, a z-score over 252
+  days and a state word. A leg without enough history shows "warming up
+  (n/252)". A leg without data shows "no data". Neither shows a number.
+- **Regime label.** The 20-day move of the 10Y, split into breakeven and real
+  yield. FRED defines `T10YIE = DGS10 − DFII10`, so the split adds up.
+- **Alerts.** Bonds ignore oil · Inflation scare without oil · Leveraged oil
+  rally · Crowded duration. The last two need 20 days of OI history. The venue
+  has none, so tapedeck stores one line per day in
+  `output/situation-history.jsonl`. Until then the two alerts show as
+  disabled, with the reason.
+- **Confidence.** One number per panel, from data age, missing legs, history
+  length and venue liquidity.
+- **Cost.** The tab adds about 25 seconds to a run, mostly for the funding
+  history. `--no-situation` skips it. A failure in the tab never stops the run.
+- **Feed.** `output/situation-latest.json` (`schema: 1`).
+
+Design, legs and thresholds:
+[`docs/superpowers/specs/2026-10-01-situation-tab-design.md`](docs/superpowers/specs/2026-10-01-situation-tab-design.md).
 
 ## What's on the page
 
