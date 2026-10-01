@@ -2,6 +2,7 @@
 (except the on-demand TradingView chart panels)."""
 
 import html as h
+import sys
 from datetime import date
 
 from . import alerts as alerts_mod
@@ -585,7 +586,8 @@ def render_page(rows, summary, alerts, diff, today, benchmark, data_date=None):
 
 def render_multi(lists, today, data_date=None, situation=None):
     """The page. ``situation`` (the build_situation dict) adds the Situation
-    tab in first place; None leaves the page exactly as it was."""
+    tab in first place; None leaves the page exactly as it was. A situation
+    that fails to render is left out with a warning; the page still renders."""
     sections, any_pos, any_vwap = [], False, False
     for wl in lists:
         section, has_pos, has_vwap = _section_html(wl, today)
@@ -595,8 +597,14 @@ def render_multi(lists, today, data_date=None, situation=None):
 
     tab_items = [(w["name"], w["title"]) for w in lists]
     if situation is not None:
-        sections.insert(0, sit_render.render_situation(situation))
-        tab_items.insert(0, (sit_render.TAB_NAME, sit_render.TAB_TITLE))
+        try:
+            sit_html = sit_render.render_situation(situation)
+        except Exception as exc:
+            print(f"warning: situation tab not rendered ({exc!r}) — page renders without it",
+                  file=sys.stderr)
+        else:
+            sections.insert(0, sit_html)
+            tab_items.insert(0, (sit_render.TAB_NAME, sit_render.TAB_TITLE))
 
     tabs_html = ""
     if len(tab_items) > 1:

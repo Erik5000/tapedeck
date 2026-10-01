@@ -631,3 +631,10 @@ def test_rows_without_a_borrowed_key_still_render():
     assert "borrowed" not in sample_row()
     assert "NVDA" in page(rows=[sample_row()])
     assert "NVDA" in page(rows=[sample_row(borrowed=None)])
+
+
+def test_a_situation_that_breaks_the_render_leaves_the_page_without_the_tab(capsys):
+    html = render.render_multi([wl("a", "A", [sample_row()])], TODAY, situation={"legs": 5})
+    assert "_situation" not in html
+    assert "<table" in html
+    assert "warning: situation tab not rendered" in capsys.readouterr().err
