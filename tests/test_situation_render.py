@@ -103,7 +103,9 @@ def test_source_errors_are_listed():
 
 
 def test_no_regime_label_says_why():
-    out = sit_render.render_situation(sit(regime={"label": None, "note": "warming up (10/21)"}))
+    out = sit_render.render_situation(sit(regime={
+        "label": None, "d10": None, "dbe": None, "dreal": None, "asof": None,
+        "note": "warming up (10/21)"}))
     assert "no label — warming up (10/21)" in out
 
 

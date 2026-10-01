@@ -13,6 +13,12 @@ BARS = 20
 THRESHOLD_BP = 10.0
 
 
+def _no_label(note):
+    """The same keys as a label, with every number None, so a reader of the
+    feed never meets a missing key."""
+    return {"label": None, "d10": None, "dbe": None, "dreal": None, "asof": None, "note": note}
+
+
 def regime_label(dgs10, t10yie, dfii10, bars=BARS, threshold_bp=THRESHOLD_BP):
     """{"label", "d10", "dbe", "dreal", "asof", "note"}; changes in bp.
 
@@ -21,10 +27,10 @@ def regime_label(dgs10, t10yie, dfii10, bars=BARS, threshold_bp=THRESHOLD_BP):
     """
     parts = [clean(s) for s in (dgs10, t10yie, dfii10)]
     if any(p is None for p in parts):
-        return {"label": None, "note": "needs DGS10, T10YIE and DFII10 from FRED"}
+        return _no_label("needs DGS10, T10YIE and DFII10 from FRED")
     frame = pd.concat(parts, axis=1, join="inner")
     if len(frame) <= bars:
-        return {"label": None, "note": f"warming up ({len(frame)}/{bars + 1})"}
+        return _no_label(f"warming up ({len(frame)}/{bars + 1})")
     # round(…, 6): (5.10 − 5.00) × 100 is 9.999999999999787 in floats.
     d10, dbe, dreal = (round(float(x) * 100, 6) for x in frame.iloc[-1] - frame.iloc[-1 - bars])
     if abs(d10) < threshold_bp:

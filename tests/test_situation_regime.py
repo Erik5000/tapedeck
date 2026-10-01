@@ -41,9 +41,11 @@ def test_the_split_adds_up_and_carries_the_fred_date():
 
 def test_missing_input_gives_no_label_and_a_reason():
     out = regime.regime_label(move(4, 5), None, move(2, 2))
-    assert out["label"] is None and "DFII10" in out["note"]
+    assert out == {"label": None, "d10": None, "dbe": None, "dreal": None, "asof": None,
+                   "note": "needs DGS10, T10YIE and DFII10 from FRED"}
 
 
 def test_too_few_shared_days_is_warming():
     out = regime.regime_label(move(4, 5, n=10), move(2, 2, n=10), move(2, 3, n=10))
-    assert out["label"] is None and out["note"] == "warming up (10/21)"
+    assert out == {"label": None, "d10": None, "dbe": None, "dreal": None, "asof": None,
+                   "note": "warming up (10/21)"}
