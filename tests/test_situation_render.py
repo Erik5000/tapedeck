@@ -96,6 +96,7 @@ def test_crowding_rows():
     assert "warming up (3/20 days)" in out and "short duration crowded" in out
     assert "1,373,816" in out and "+12.0%" in out
     assert re.search(r"xyz:CL</td><td[^>]*>no data", out)
+    assert '<th class="a-r">OI (contracts)</th>' in out
 
 
 def test_source_errors_are_listed():

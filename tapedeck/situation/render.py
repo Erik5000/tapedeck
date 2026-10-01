@@ -85,7 +85,7 @@ def _crowd_row(row):
 
 def _crowding_panel(rows):
     head = ('<tr><th>Market</th><th class="a-r">Funding/yr</th><th class="a-r">z</th>'
-            '<th class="a-r">OI</th><th class="a-r">OI Δ20d</th><th>Side</th></tr>')
+            '<th class="a-r">OI (contracts)</th><th class="a-r">OI Δ20d</th><th>Side</th></tr>')
     body = "".join(_crowd_row(r) for r in rows)
     return ('<section class="panel pcol"><span class="ptitle">Crowding (venue)</span>'
             f'<table class="minitbl"><thead>{head}</thead><tbody>{body}</tbody></table></section>')
