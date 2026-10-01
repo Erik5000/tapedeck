@@ -173,9 +173,16 @@ runs on leveraged perp longs, and whether one side of duration is crowded.
   disabled, with the reason.
 - **Confidence.** One number per panel, from data age, missing legs, history
   length and venue liquidity.
-- **Cost.** The tab adds about 25 seconds to a run, mostly for the funding
-  history. `--no-situation` skips it. A failure in the tab never stops the run.
-- **Feed.** `output/situation-latest.json` (`schema: 1`).
+- **Funding cache.** `output/situation-funding/` keeps one CSV of funding
+  history per market, so a run fetches only the rows since the last run.
+- **Cost.** Measured on 2026-10-01, a full run took 130 s with an empty
+  funding cache, 38 s with a warm cache, and 50 s with `--no-situation`. The
+  watchlist fetch varies by tens of seconds from run to run, so these totals
+  do not isolate the tab. The venue calls stop after 90 seconds; a call not
+  sent shows as "skipped: time limit". `--no-situation` skips the tab. A
+  failure in the tab never stops the run.
+- **Feed.** `output/situation-latest.json` (`schema: 1`). When the tab is
+  skipped or fails, the file from an earlier run stays. Check its `date`.
 
 Design, legs and thresholds:
 [`docs/superpowers/specs/2026-10-01-situation-tab-design.md`](docs/superpowers/specs/2026-10-01-situation-tab-design.md).

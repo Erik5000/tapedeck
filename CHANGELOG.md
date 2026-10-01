@@ -18,6 +18,9 @@
 - **New files:** `output/situation-latest.json` (`schema: 1`) and
   `output/situation-history.jsonl` (OI, one line per day).
 - **`--no-situation`** skips the tab. A failure in the tab never stops the run.
+- **Funding cache and a time limit.** `output/situation-funding/` keeps funding
+  history per market, so a run fetches only new rows. Venue calls stop after
+  90 seconds, and the page is still written.
 - **Tests no longer reach the network.** `tests/conftest.py` blocks
   `hlfetch._post` and the FRED fetch for every test.
 
