@@ -7,7 +7,9 @@ alone: a failed series is absent from the result and its reason is in
 No API key, nothing to sign up for. FRED's ``fredgraph.csv`` is the Fed's
 public file. The venue is the same endpoint ``hlfetch`` already uses, and the
 calls go through ``hlfetch._post`` so one stub covers both in tests. Venue
-calls run one at a time and retry on HTTP 429 with a growing wait.
+calls run one at a time and retry on HTTP 429 with a growing wait. The venue
+part has a time limit, ``VENUE_BUDGET_S``: once it is spent, the remaining
+venue calls are skipped, so a slow venue cannot stop the page from being written.
 
 Funding history is cached per market in ``<cache_dir>/<market>.csv``
 (``:`` becomes ``_``), so a run fetches only the rows after the last cached
@@ -42,6 +44,7 @@ FUNDING_PAGE = 500      # the venue returns at most this many rows per call
 FUNDING_MAX_PAGES = 20
 TIMEOUT = 30
 RETRY_DELAYS = (1, 2, 4, 8)   # seconds to wait after each HTTP 429
+VENUE_BUDGET_S = 90     # seconds for all venue calls of one run
 
 
 def _get(url, timeout=TIMEOUT):
@@ -50,17 +53,32 @@ def _get(url, timeout=TIMEOUT):
 
 
 _sleep = time.sleep     # tests replace it so no test waits
+_clock = time.monotonic  # tests replace it to drive the time limit
 
 
-def _venue_post(body):
+class OutOfTime(Exception):
+    """The venue time limit is spent; the call was not sent."""
+
+    def __init__(self):
+        super().__init__("skipped: time limit")
+
+
+def _venue_post(body, deadline=None):
     """``hlfetch._post`` that waits and retries on HTTP 429. The venue refuses
-    bursts for a moment, so a 429 is transient. Any other error raises at once."""
+    bursts for a moment, so a 429 is transient. Any other error raises at once.
+
+    With a ``deadline`` (a ``_clock`` value): past it, the call is not sent
+    (``OutOfTime``), and a wait that would end past it is not taken — the 429
+    raises instead."""
+    if deadline is not None and _clock() >= deadline:
+        raise OutOfTime()
     for delay in RETRY_DELAYS:
         try:
             return hlfetch._post(body)
         except urllib.error.HTTPError as exc:
-            if exc.code != 429:
+            if exc.code != 429 or (deadline is not None and _clock() + delay > deadline):
                 raise
+        print(f"warning: situation · venue rate limited, waiting {delay} s", file=sys.stderr)
         _sleep(delay)
     return hlfetch._post(body)
 
@@ -109,7 +127,7 @@ def fetch_fred(series_id, today):
 
 # ---------- venue ----------
 
-def fetch_venue_closes(markets, errors=None, now_ms=None):
+def fetch_venue_closes(markets, errors=None, now_ms=None, deadline=None):
     """{qualified market: daily Close Series}, fetched one market at a time.
     A market that fails or has no bars is absent; its reason goes into
     ``errors`` when given. One market never drops another."""
@@ -121,7 +139,7 @@ def fetch_venue_closes(markets, errors=None, now_ms=None):
             frame = hlfetch._candles_to_frame(_venue_post(
                 {"type": "candleSnapshot",
                  "req": {"coin": market, "interval": "1d",
-                         "startTime": start_ms, "endTime": end_ms}}))
+                         "startTime": start_ms, "endTime": end_ms}}, deadline))
         except Exception as exc:
             if errors is not None:
                 errors[f"{market} candles"] = _reason(exc)
@@ -152,8 +170,9 @@ def parse_contexts(resp, wanted):
     return out
 
 
-def fetch_contexts(dex, wanted):
-    return parse_contexts(_venue_post({"type": "metaAndAssetCtxs", "dex": dex}), wanted)
+def fetch_contexts(dex, wanted, deadline=None):
+    return parse_contexts(_venue_post({"type": "metaAndAssetCtxs", "dex": dex}, deadline),
+                          wanted)
 
 
 def parse_funding(rows):
@@ -174,14 +193,15 @@ def parse_funding(rows):
     return s[~s.index.duplicated(keep="last")]
 
 
-def fetch_funding(market, now_ms, days=FUNDING_DAYS, start_ms=None):
+def fetch_funding(market, now_ms, days=FUNDING_DAYS, start_ms=None, deadline=None):
     """Hourly funding for ``days`` days, or from ``start_ms`` when given. The
     venue pages at 500 rows, so the next page starts one millisecond after the
     last row of the previous one."""
     start = now_ms - days * 86_400_000 if start_ms is None else start_ms
     rows = []
     for _ in range(FUNDING_MAX_PAGES):
-        batch = _venue_post({"type": "fundingHistory", "coin": market, "startTime": start})
+        batch = _venue_post({"type": "fundingHistory", "coin": market, "startTime": start},
+                            deadline)
         if not batch:
             break
         rows.extend(batch)
@@ -226,7 +246,7 @@ def write_funding_cache(path, s):
     write_atomic(Path(path), "time_ms,rate\n" + lines)
 
 
-def fetch_funding_cached(market, now_ms, cache_dir, errors):
+def fetch_funding_cached(market, now_ms, cache_dir, errors, deadline=None):
     """Cached funding plus the rows after it, trimmed to ``FUNDING_DAYS``.
 
     A failed fetch returns the cached Series (the reason still goes into
@@ -237,7 +257,7 @@ def fetch_funding_cached(market, now_ms, cache_dir, errors):
     cached = read_funding_cache(path) if path is not None else None
     start = None if cached is None else max(_to_ms(cached.index[-1]) + 1, cutoff)
     try:
-        new = fetch_funding(market, now_ms, start_ms=start)
+        new = fetch_funding(market, now_ms, start_ms=start, deadline=deadline)
     except Exception as exc:
         errors[f"{market} funding"] = _reason(exc)
         new, failed = None, True
@@ -286,20 +306,22 @@ def fetch_all(today, now_ms=None, cache_dir=None):
     # FRED runs in a pool while the venue calls run in order in this thread.
     with ThreadPoolExecutor(max_workers=8) as pool:
         fred_future = pool.map(fred_one, FRED_IDS)
+        deadline = _clock() + VENUE_BUDGET_S
 
-        out["closes"] = fetch_venue_closes(VENUE_MARKETS, errors=out["errors"], now_ms=now_ms)
+        out["closes"] = fetch_venue_closes(VENUE_MARKETS, errors=out["errors"], now_ms=now_ms,
+                                           deadline=deadline)
         for market in VENUE_MARKETS:
             if market not in out["closes"]:
                 out["errors"].setdefault(f"{market} candles", "no candles")
 
         for dex in _by_dex(VENUE_MARKETS):
             try:
-                out["ctx"].update(fetch_contexts(dex, set(VENUE_MARKETS)))
+                out["ctx"].update(fetch_contexts(dex, set(VENUE_MARKETS), deadline))
             except Exception as exc:
                 out["errors"][f"{dex} context"] = _reason(exc)
 
         for market in FUNDING_MARKETS:
-            s = fetch_funding_cached(market, now_ms, cache_dir, out["errors"])
+            s = fetch_funding_cached(market, now_ms, cache_dir, out["errors"], deadline)
             if s is not None:
                 out["funding"][market] = s
 

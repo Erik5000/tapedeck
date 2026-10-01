@@ -347,3 +347,57 @@ def test_a_cache_that_cannot_be_written_is_a_warning(monkeypatch, tmp_path, caps
     out = sources.fetch_all(TODAY, now_ms=NOW_MS, cache_dir=blocker)
     assert len(out["funding"]["xyz:CL"]) == sources.FUNDING_DAYS * 24
     assert "xyz_CL.csv not saved" in capsys.readouterr().err
+
+
+# ---------- venue time limit ----------
+
+def test_a_spent_budget_skips_the_remaining_venue_calls(monkeypatch):
+    now, calls = [0.0], []
+    inner = _venue_stub()
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        calls.append(body)
+        now[0] += 50                      # each call takes 50 s
+        return inner(body, timeout)
+
+    monkeypatch.setattr(sources, "_clock", lambda: now[0])
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    out = sources.fetch_all(TODAY, now_ms=NOW_MS)
+    assert len(calls) == 2                # at 0 s and 50 s; at 100 s the 90 s budget is spent
+    assert set(out["closes"]) == {"para:2Y", "para:10Y"}
+    assert out["errors"]["para:30Y candles"] == "skipped: time limit"
+    assert out["errors"]["xyz context"] == "skipped: time limit"
+    assert out["errors"]["xyz:CL funding"] == "skipped: time limit"
+
+
+def test_a_wait_that_would_cross_the_budget_is_not_taken(monkeypatch):
+    now, waits = [0.0], []
+
+    def fake_sleep(s):
+        waits.append(s)
+        now[0] += s
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        raise _http(429)
+
+    monkeypatch.setattr(sources, "_clock", lambda: now[0])
+    monkeypatch.setattr(sources, "_sleep", fake_sleep)
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    with pytest.raises(urllib.error.HTTPError) as err:
+        sources._venue_post({"type": "x"}, deadline=5)
+    assert err.value.code == 429
+    assert waits == [1, 2]                # the 4 s wait would end at 7 s, past 5 s
+
+
+def test_a_429_wait_prints_one_line(monkeypatch, waits, capsys):
+    answers = [_http(429), "ok"]
+
+    def fake_post(body, timeout=hlfetch.TIMEOUT):
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(hlfetch, "_post", fake_post)
+    assert sources._venue_post({"type": "x"}) == "ok"
+    assert capsys.readouterr().err == "warning: situation · venue rate limited, waiting 1 s\n"
