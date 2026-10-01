@@ -32,13 +32,19 @@ CROWD_MARKETS = (("xyz:BRENTOIL", "oil"), ("xyz:CL", "oil"),
 
 def funding_stats(hourly, recent_days=FUNDING_RECENT_DAYS, min_days=FUNDING_MIN_DAYS):
     """{"funding_ann": %/yr over the last 7 days, "funding_z": z of daily mean
-    funding over all fetched days (None under 60 days), "funding_days": n}."""
+    funding over all fetched whole days (None under 60 days), "funding_days": n}.
+
+    The index is UTC. A day without its 23:00 row is not over yet; the mean of
+    a few hours is noisy, so that day is left out of the daily series. It
+    still counts in ``funding_ann``, which uses the hourly rows.
+    """
     s = clean(hourly)
     if s is None:
         return {"funding_ann": None, "funding_z": None, "funding_days": 0}
     recent = s[s.index > s.index[-1] - pd.Timedelta(days=recent_days)]
     ann = stats.finite(float(recent.mean()) * HOURS_PER_YEAR * 100)
-    daily = s.resample("D").mean().dropna()
+    whole = s if s.index[-1].hour == 23 else s[s.index < s.index[-1].normalize()]
+    daily = whole.resample("D").mean().dropna()
     n = len(daily)
     z = stats.zscore(daily, window=n) if n >= min_days else None
     return {"funding_ann": ann, "funding_z": z, "funding_days": n}

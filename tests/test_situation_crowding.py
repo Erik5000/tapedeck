@@ -29,6 +29,17 @@ def test_funding_z_needs_sixty_days():
     assert crowding.funding_stats(hourly(lambda n: np.linspace(0, 1e-5, n), days=61))["funding_z"] > 1
 
 
+def test_funding_z_drops_the_incomplete_last_day():
+    base = hourly(lambda n: np.linspace(0, 1e-5, n), days=90)
+    early_today = pd.Series(-1e-3, index=pd.date_range("2026-10-01 00:00", periods=6, freq="h"))
+    s = pd.concat([base, early_today])
+    out = crowding.funding_stats(s)
+    assert out["funding_z"] == crowding.funding_stats(base)["funding_z"]
+    assert out["funding_days"] == 90
+    recent = s[s.index > s.index[-1] - pd.Timedelta(days=7)]     # funding_ann keeps today's hours
+    assert out["funding_ann"] == pytest.approx(recent.mean() * 24 * 365 * 100)
+
+
 def test_no_funding_is_none_not_zero():
     assert crowding.funding_stats(None) == {"funding_ann": None, "funding_z": None, "funding_days": 0}
 
