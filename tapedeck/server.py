@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SERVICE = "tapedeck"
 DEFAULT_PORT = 7360
 
-REFRESH_TIMEOUT = 600      # a normal run is ~20s
+REFRESH_TIMEOUT = 600      # a run took 38-130 s on 2026-10-01 (130 s with a cold funding cache)
 VWAP_TIMEOUT = 1800        # a cold Twelve Data scan is ~8 min
 
 _ALLOWED_HOSTNAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}

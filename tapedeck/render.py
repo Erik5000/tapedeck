@@ -2,10 +2,12 @@
 (except the on-demand TradingView chart panels)."""
 
 import html as h
+import sys
 from datetime import date
 
 from . import alerts as alerts_mod
 from . import vwaplink
+from .situation import render as sit_render
 
 # ---------- formatting ----------
 
@@ -582,7 +584,10 @@ def render_page(rows, summary, alerts, diff, today, benchmark, data_date=None):
                         today, data_date=data_date)
 
 
-def render_multi(lists, today, data_date=None):
+def render_multi(lists, today, data_date=None, situation=None):
+    """The page. ``situation`` (the build_situation dict) adds the Situation
+    tab in first place; None leaves the page exactly as it was. A situation
+    that fails to render is left out with a warning; the page still renders."""
     sections, any_pos, any_vwap = [], False, False
     for wl in lists:
         section, has_pos, has_vwap = _section_html(wl, today)
@@ -590,11 +595,22 @@ def render_multi(lists, today, data_date=None):
         any_pos = any_pos or has_pos
         any_vwap = any_vwap or has_vwap
 
+    tab_items = [(w["name"], w["title"]) for w in lists]
+    if situation is not None:
+        try:
+            sit_html = sit_render.render_situation(situation)
+        except Exception as exc:
+            print(f"warning: situation tab not rendered ({exc!r}) — page renders without it",
+                  file=sys.stderr)
+        else:
+            sections.insert(0, sit_html)
+            tab_items.insert(0, (sit_render.TAB_NAME, sit_render.TAB_TITLE))
+
     tabs_html = ""
-    if len(lists) > 1:
+    if len(tab_items) > 1:
         tabs_html = '<nav class="wltabs">' + "".join(
-            f'<button class="wtab" data-wl="{h.escape(w["name"])}">{h.escape(w["title"])}</button>'
-            for w in lists) + "</nav>"
+            f'<button class="wtab" data-wl="{h.escape(name)}">{h.escape(title)}</button>'
+            for name, title in tab_items) + "</nav>"
 
     subtitle = lists[0]["title"] if len(lists) == 1 else f"{len(lists)} watchlists"
     pos_btn = '<button id="posbtn" class="tbtn">Positions</button>' if any_pos else ""
@@ -671,6 +687,9 @@ h1 .brand {{ font-weight:800; }}
 .chip.good {{ color:var(--up); background:rgba(var(--up-rgb),.08); }}
 .chip.bad {{ color:var(--down); background:rgba(var(--down-rgb),.08); }}
 .chip.warn {{ color:var(--warn-ink); background:rgba(var(--val-rgb),.12); }}
+.chip.off {{ color:var(--muted); }}
+.sitmuted {{ color:var(--muted); font-size:12px; }}
+.sitstrip > div {{ margin:3px 0; }}
 /* A value taken from the row's reference instrument. Dotted underline rather
    than a colour, so it reads as a footnote and not as another heat scale;
    hover gives the source symbol. */
